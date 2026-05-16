@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>AffineUI — bootstrap reference</title>
+<style>
+  /* Same stylesheet + body as examples/01_bootstrap/main.cpp.
+     Open this in a browser to compare against ./build/examples/bootstrap/bootstrap. */
+
+  body {
+      font-family: -apple-system, system-ui, sans-serif;
+      font-size: 16px;
+      color: #212529;
+      background-color: #f8f9fa;
+      margin: 0;
+      padding: 0;
+  }
+  h1, h2, h3, h4 { color: #212529; margin: 0 0 12px 0; }
+  h1 { font-size: 32px; font-weight: 500; }
+  h2 { font-size: 24px; font-weight: 500; }
+  h3 { font-size: 20px; font-weight: 500; }
+  p  { margin: 0 0 16px 0; }
+
+  .container { padding: 24px; }
+  .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 16px;
+  }
+  .col { flex-grow: 1; flex-basis: 0; }
+
+  .navbar {
+      display: flex;
+      align-items: center;
+      padding: 12px 24px;
+      background-color: #212529;
+      color: #ffffff;
+  }
+  .navbar-brand {
+      font-size: 20px; font-weight: 600;
+      color: #ffffff; margin-right: 24px;
+  }
+  .navbar-link {
+      color: #adb5bd; font-size: 16px; margin-right: 16px;
+  }
+  .navbar-link:hover { color: #ffffff; }
+
+  .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-size: 16px;
+      margin-right: 8px;
+  }
+  .btn-primary {
+      background-color: #0d6efd; color: #ffffff; border-color: #0d6efd;
+  }
+  .btn-primary:hover  { background-color: #0b5ed7; border-color: #0a58ca; }
+  .btn-primary:active { background-color: #0a58ca; }
+  .btn-secondary {
+      background-color: #6c757d; color: #ffffff; border-color: #6c757d;
+  }
+  .btn-secondary:hover  { background-color: #5c636a; border-color: #565e64; }
+  .btn-secondary:active { background-color: #565e64; }
+  .btn-outline {
+      background-color: #ffffff; color: #0d6efd; border-color: #0d6efd;
+  }
+  .btn-outline:hover  { background-color: #0d6efd; color: #ffffff; }
+
+  .card {
+      background-color: #ffffff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+  }
+  .card-body { padding: 16px 20px; }
+  .card-title {
+      font-size: 18px; font-weight: 500;
+      color: #212529; margin: 0 0 8px 0;
+  }
+  .card-text {
+      color: #495057; font-size: 14px; margin: 0 0 12px 0;
+  }
+</style>
+</head>
+<body>
+  <div class="navbar">
+      <a class="navbar-brand">AffineUI</a>
+      <a class="navbar-link">Docs</a>
+      <a class="navbar-link">Examples</a>
+      <a class="navbar-link">GitHub</a>
+  </div>
+
+  <div class="container">
+      <h1>Bootstrap-flavored stress test</h1>
+      <p>Hover the buttons; press them; watch the cards.
+         Gaps surfaced here become the next round of cascade /
+         paint work.</p>
+
+      <div class="row">
+          <div class="col">
+              <div class="card">
+                  <div class="card-body">
+                      <h3 class="card-title">Primary action</h3>
+                      <p class="card-text">A solid card with a
+                         filled primary button.</p>
+                      <button class="btn btn-primary">Save</button>
+                      <button class="btn btn-secondary">Cancel</button>
+                  </div>
+              </div>
+          </div>
+          <div class="col">
+              <div class="card">
+                  <div class="card-body">
+                      <h3 class="card-title">Outline variant</h3>
+                      <p class="card-text">An outline button
+                         flips fill on hover.</p>
+                      <button class="btn btn-outline">Learn more</button>
+                  </div>
+              </div>
+          </div>
+          <div class="col">
+              <div class="card">
+                  <div class="card-body">
+                      <h3 class="card-title">Plain card</h3>
+                      <p class="card-text">No button. Just here
+                         to fill out the row.</p>
+                  </div>
+              </div>
+          </div>
+      </div>
+
+      <div class="row">
+          <div class="col">
+              <div class="card">
+                  <div class="card-body">
+                      <h2>Wide card</h2>
+                      <p class="card-text">This row has a
+                         single column, so this card stretches
+                         to fill the row's width.</p>
+                      <button class="btn btn-primary">Action</button>
+                  </div>
+              </div>
+          </div>
+      </div>
+  </div>
+</body>
+</html>

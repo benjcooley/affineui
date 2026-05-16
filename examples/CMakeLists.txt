@@ -29,5 +29,6 @@ function(affineui_add_sdl_example name)
 endfunction()
 
 add_subdirectory(00_hello)
+add_subdirectory(01_bootstrap)
 add_subdirectory(02_hello_sdl)
 add_subdirectory(04_imm_counter)

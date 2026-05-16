@@ -12,9 +12,14 @@ std::string_view ua_default() {
     static constexpr std::string_view kCss =
         // Minimal user-agent baseline. Mirrors the parts of the HTML5
         // default stylesheet we actually depend on.
+        //
+        // Body gets a 24px padding by default so simple pages have a
+        // sensible page-gutter without authoring CSS. Demos that want
+        // edge-to-edge content (a Bootstrap-style navbar, for
+        // example) override with `body { padding: 0 }`.
         "html,body{margin:0;padding:0}"
         "body{font-family:sans-serif;font-size:16px;line-height:1.5;"
-        "color:#1f2328;background:#ffffff}"
+        "color:#1f2328;background:#ffffff;padding:24px}"
         "h1{font-size:2em;margin:.67em 0}"
         "h2{font-size:1.5em;margin:.75em 0}"
         "h3{font-size:1.17em;margin:.83em 0}"

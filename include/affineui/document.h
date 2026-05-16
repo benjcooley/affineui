@@ -47,7 +47,11 @@ public:
     /// text-bearing leaves precisely). Pass nullptr for tests or
     /// headless cases — layout falls back to a conservative `font_size`
     /// estimate that may produce vertically-asymmetric padding.
-    void layout(int viewport_width, Painter* measurer = nullptr);
+    /// `viewport_height` extends content_size so the body background
+    /// fills the visible viewport even when natural page content is
+    /// shorter than the window. Pass 0 to disable the floor.
+    void layout(int viewport_width, int viewport_height = 0,
+                Painter* measurer = nullptr);
 
     /// Paint the current document into `painter`. `painter` is whatever
     /// the embedder supplies — typically an internal NanoVG-backed one.

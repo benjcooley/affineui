@@ -725,14 +725,33 @@ void Document::reload_stylesheets() {
     if (!impl_->html.empty()) set_html(impl_->html);
 }
 
-void Document::layout(int viewport_width, Painter* measurer) {
+void Document::layout(int viewport_width, int viewport_height,
+                      Painter* measurer) {
     // Layout delegates to Yoga via src/layout/yoga_adapter. Text
     // leaves get a Yoga measure callback that calls nvgTextBoxBounds
     // — Yoga asks "given width W, what height?" and we return the
     // *actually rendered* wrapped bbox. No metric heuristics; the
     // top/bottom padding ends up symmetric for free because the
     // content area matches what the painter will draw into.
-    constexpr int kPagePadding = 24;
+    //
+    // Page gutter is driven by body's CSS padding. UA defaults body
+    // to 24px on all sides; pages that want edge-to-edge content
+    // (Bootstrap-style navbars, full-bleed images) override with
+    // `body { padding: 0 }`.
+    int pad_l = 0, pad_t = 0, pad_r = 0, pad_b = 0;
+#if !defined(AFFINEUI_STUB_BUILD)
+    if (impl_->doc && impl_->resolver) {
+        if (auto* body = lxb_html_document_body_element(impl_->doc); body) {
+            const auto rs = impl_->resolver->resolve(
+                lxb_dom_interface_element(lxb_dom_interface_node(body)),
+                impl_->root_style);
+            pad_l = rs.computed.padding_left;
+            pad_t = rs.computed.padding_top;
+            pad_r = rs.computed.padding_right;
+            pad_b = rs.computed.padding_bottom;
+        }
+    }
+#endif
 
     std::vector<detail::BlockLayoutInput> inputs;
     inputs.reserve(impl_->blocks.size());
@@ -768,22 +787,27 @@ void Document::layout(int viewport_width, Painter* measurer) {
     }
 
     std::vector<Rect> out(impl_->blocks.size());
-    // Yoga's root has no per-block padding of its own. We bake the
-    // page gutter in by shrinking the viewport handed to Yoga and
-    // shifting frames back out below. Cleaner: a real root node with
-    // padding set; Phase 2D once we have a real Box tree.
-    const int inner_w = viewport_width - 2 * kPagePadding;
+    // Yoga's root has no per-block padding of its own. We bake body's
+    // padding in by shrinking the viewport handed to Yoga and
+    // shifting frames back out below. Cleaner future: a real Box
+    // tree where body is its own Yoga node.
+    const int inner_w = viewport_width - pad_l - pad_r;
     detail::layout_blocks_with_yoga(inner_w, inputs, out, measurer);
 
     int max_bottom = 0;
     for (std::size_t i = 0; i < impl_->blocks.size(); ++i) {
-        out[i].x += kPagePadding;
-        out[i].y += kPagePadding;
+        out[i].x += pad_l;
+        out[i].y += pad_t;
         impl_->blocks[i].bounds = out[i];
         const int bottom = out[i].y + out[i].h;
         if (bottom > max_bottom) max_bottom = bottom;
     }
-    impl_->content_size = Size{viewport_width, max_bottom + kPagePadding};
+    // content_size = max(natural body height, viewport floor). The
+    // floor ensures body's background fills the visible window even
+    // when natural content is shorter.
+    const int natural_h = max_bottom + pad_b;
+    impl_->content_size = Size{viewport_width,
+                               std::max(natural_h, viewport_height)};
 
     // Compute per-block content_h = max(child bottom edge) - own top.
     // Used by the scroll path: how far the user can scroll before the
@@ -828,6 +852,29 @@ void Document::draw(Painter& painter) {
     // draw position. If any ancestor is a scrollable container, push
     // its bounds as the clip rect for the duration of this block's
     // draws so overflowing children stay inside the container.
+
+    // Body background fills the page. <body> is the implicit root
+    // and isn't in the block list (collect_blocks starts walking its
+    // children), so its bg needs an explicit pre-pass. The clear
+    // color is the window's, not the page's — without this, body's
+    // bg-color silently does nothing.
+#if !defined(AFFINEUI_STUB_BUILD)
+    if (impl_->doc) {
+        auto* body = lxb_html_document_body_element(impl_->doc);
+        if (body && impl_->resolver) {
+            const auto rs = impl_->resolver->resolve(
+                lxb_dom_interface_element(lxb_dom_interface_node(body)),
+                impl_->root_style);
+            if ((rs.animated.background_rgba & 0xFFu) != 0) {
+                painter.fill_rect(
+                    Rect{0, 0, impl_->content_size.width,
+                         impl_->content_size.height},
+                    detail::unpack_rgba(rs.animated.background_rgba));
+            }
+        }
+    }
+#endif
+
     for (std::size_t i = 0; i < impl_->blocks.size(); ++i) {
         const auto& b  = impl_->blocks[i];
         const auto& cs = impl_->style_store.computed(b.id);

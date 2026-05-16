@@ -421,16 +421,23 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
     }
 }
 
-// lxb_html_element_style_walk callback. Invoked once per matched
-// declaration in cascade order — so the last write wins, which is
-// exactly what we want.
+// lxb_html_element_style_walk callback. Lexbor's pre-matched store
+// keeps the highest-specificity rule per property as the AVL node's
+// "primary" value, with lower-specificity matches chained behind as
+// "weak" entries. The walk visits PRIMARY first then WEAK, so if we
+// applied every declaration with last-write-wins we'd let the lower-
+// specificity rule overwrite the higher one — exactly backwards from
+// CSS cascade semantics. Solution: ignore the weak chain entirely.
+// The primary entry already encodes the cascade winner for this
+// property on this element.
 struct WalkCtx { ResolvedStyle* out; };
 
 lxb_status_t walk_callback(lxb_html_element_t* /*element*/,
                            const lxb_css_rule_declaration_t* declr,
                            void* ctx,
                            lxb_css_selector_specificity_t /*spec*/,
-                           bool /*is_weak*/) {
+                           bool is_weak) {
+    if (is_weak) return LXB_STATUS_OK;
     apply_declaration(declr, *static_cast<WalkCtx*>(ctx)->out);
     return LXB_STATUS_OK;
 }
@@ -493,7 +500,11 @@ public:
         WalkCtx ctx{&s};
         auto* html_el =
             lxb_html_interface_element(lxb_dom_interface_node(element));
-        lxb_html_element_style_walk(html_el, walk_callback, &ctx, /*primary=*/true);
+        // with_weak=false: only walk the cascade winner per property.
+        // The walk_callback also guards against weak entries for
+        // belt-and-braces in case lexbor's contract ever shifts.
+        lxb_html_element_style_walk(html_el, walk_callback, &ctx,
+                                    /*with_weak=*/false);
         return s;
     }
 

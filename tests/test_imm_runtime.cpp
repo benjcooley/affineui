@@ -112,7 +112,7 @@ TEST_CASE("imm counter works through layout hit testing and Ui dispatch") {
 
     auto render_headless = [&] {
         app.document().tick_imm();
-        app.document().layout(520, &painter);
+        app.document().layout(520, /*viewport_height=*/0, &painter);
     };
     auto find_button_point = [&]() {
         for (int y = 0; y < 360; y += 4) {

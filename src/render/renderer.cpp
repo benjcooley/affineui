@@ -131,7 +131,7 @@ void Renderer::render(Document& doc, int fb_w, int fb_h, float dpi_scale) {
                            || fb_h != impl_->last_h;
     const bool layout_dirty = doc.content_size().width != pt_w;
     if (viewport_changed || layout_dirty) {
-        doc.layout(pt_w, impl_->painter.get());
+        doc.layout(pt_w, pt_h, impl_->painter.get());
         impl_->last_w     = fb_w;
         impl_->last_h     = fb_h;
         impl_->last_dpi   = dpi_scale;
