@@ -96,6 +96,42 @@ public:
         list_.ops.push_back(op);
     }
 
+    void fill_rounded_rect_varying(const Rect& r,
+                                   float tl, float tr, float br, float bl,
+                                   Color c) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::FillRoundedRectVarying;
+        op.p.fill_rounded_varying.x = static_cast<std::int16_t>(r.x);
+        op.p.fill_rounded_varying.y = static_cast<std::int16_t>(r.y);
+        op.p.fill_rounded_varying.w = static_cast<std::int16_t>(r.w);
+        op.p.fill_rounded_varying.h = static_cast<std::int16_t>(r.h);
+        op.p.fill_rounded_varying.rgba = pack(c);
+        op.p.fill_rounded_varying.tl = static_cast<std::uint16_t>(tl);
+        op.p.fill_rounded_varying.tr = static_cast<std::uint16_t>(tr);
+        op.p.fill_rounded_varying.br = static_cast<std::uint16_t>(br);
+        op.p.fill_rounded_varying.bl = static_cast<std::uint16_t>(bl);
+        op.p.fill_rounded_varying.reserved = 0;
+        list_.ops.push_back(op);
+    }
+
+    void stroke_rounded_rect_varying(const Rect& r,
+                                     float tl, float tr, float br, float bl,
+                                     Color c, float thickness) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::StrokeRoundedRectVarying;
+        op.p.stroke_rounded_varying.x = static_cast<std::int16_t>(r.x);
+        op.p.stroke_rounded_varying.y = static_cast<std::int16_t>(r.y);
+        op.p.stroke_rounded_varying.w = static_cast<std::int16_t>(r.w);
+        op.p.stroke_rounded_varying.h = static_cast<std::int16_t>(r.h);
+        op.p.stroke_rounded_varying.rgba = pack(c);
+        op.p.stroke_rounded_varying.tl = static_cast<std::uint16_t>(tl);
+        op.p.stroke_rounded_varying.tr = static_cast<std::uint16_t>(tr);
+        op.p.stroke_rounded_varying.br = static_cast<std::uint16_t>(br);
+        op.p.stroke_rounded_varying.bl = static_cast<std::uint16_t>(bl);
+        op.p.stroke_rounded_varying.thickness = thickness;
+        list_.ops.push_back(op);
+    }
+
     std::uint32_t resolve_font(std::string_view family, int size_px,
                                int weight, bool italic) override {
         return font_resolver_
@@ -237,6 +273,24 @@ inline void replay(const DisplayList& list, Painter& target) {
                 const auto& r = op.p.stroke_rounded;
                 target.stroke_rounded_rect(Rect{r.x, r.y, r.w, r.h},
                                            r.radius, unpack(r.rgba), r.thickness);
+                break;
+            }
+            case PaintOpKind::FillRoundedRectVarying: {
+                const auto& r = op.p.fill_rounded_varying;
+                target.fill_rounded_rect_varying(
+                    Rect{r.x, r.y, r.w, r.h},
+                    static_cast<float>(r.tl), static_cast<float>(r.tr),
+                    static_cast<float>(r.br), static_cast<float>(r.bl),
+                    unpack(r.rgba));
+                break;
+            }
+            case PaintOpKind::StrokeRoundedRectVarying: {
+                const auto& r = op.p.stroke_rounded_varying;
+                target.stroke_rounded_rect_varying(
+                    Rect{r.x, r.y, r.w, r.h},
+                    static_cast<float>(r.tl), static_cast<float>(r.tr),
+                    static_cast<float>(r.br), static_cast<float>(r.bl),
+                    unpack(r.rgba), r.thickness);
                 break;
             }
             case PaintOpKind::DrawText: {

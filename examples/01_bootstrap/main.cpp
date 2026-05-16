@@ -183,6 +183,21 @@ int main() {
                     </div>
                 </div>
             </div>
+
+            <div class="row">
+                <div class="col">
+                    <div class="card" style="border-radius: 0 24px 0 24px">
+                        <div class="card-body">
+                            <h2>Per-corner radius</h2>
+                            <p class="card-text">This card uses
+                               <code>border-radius: 0 24px 0 24px</code>
+                               — TR + BL are rounded; TL + BR are
+                               square. CSS shorthand pairing puts the
+                               two values on diagonal pairs.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     )HTML");
 

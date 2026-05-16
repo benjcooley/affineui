@@ -24,6 +24,8 @@ enum class PaintOpKind : std::uint8_t {
     StrokeRect,
     FillRoundedRect,
     StrokeRoundedRect,
+    FillRoundedRectVarying,
+    StrokeRoundedRectVarying,
     DrawText,
     DrawTextBox,
     DrawImage,
@@ -64,6 +66,22 @@ struct PaintOp {
             float         radius;
             float         thickness;
         } stroke_rounded;
+
+        // Per-corner radii. The radius fields are u16 so they cap
+        // at 65535 px (way beyond any realistic UI). Stroke variant
+        // also stows the line thickness in the trailing 4 bytes.
+        struct {
+            std::int16_t  x, y, w, h;          // 8
+            std::uint32_t rgba;                 // 4
+            std::uint16_t tl, tr, br, bl;       // 8
+            std::uint32_t reserved;             // 4
+        } fill_rounded_varying;
+        struct {
+            std::int16_t  x, y, w, h;          // 8
+            std::uint32_t rgba;                 // 4
+            std::uint16_t tl, tr, br, bl;       // 8
+            float         thickness;            // 4
+        } stroke_rounded_varying;
 
         struct {
             std::uint32_t font_handle;

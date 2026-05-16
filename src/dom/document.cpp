@@ -116,7 +116,13 @@ struct PseudoRule {
 struct RuleFill {
     CompoundSelector              target;
     std::vector<CompoundSelector> ancestors;
-    int                           border_radius_px{-1};   // -1 = unset
+    // Per-corner border-radius after applying CSS pairing. Valid only
+    // when has_border_radius is true; otherwise all four are -1.
+    int                           border_radius_tl_px{-1};
+    int                           border_radius_tr_px{-1};
+    int                           border_radius_br_px{-1};
+    int                           border_radius_bl_px{-1};
+    bool                          has_border_radius{false};
     int                           gap_px{-1};             // -1 = unset
     std::uint32_t                 border_rgba{0};
     std::uint32_t                 background_rgba{0};
@@ -667,6 +673,49 @@ std::pair<std::uint32_t, bool> find_decl_hex(std::string_view decls,
     return {0, false};
 }
 
+// Find `key: <px> [<px> [<px> [<px>]]]` and return up to N parsed
+// integers via `out_values` / `out_count`. Returns true on at least
+// one match. Used for shorthands like `border-radius: 4px 8px` where
+// CSS pairing rules are applied by the caller.
+bool find_decl_px_values(std::string_view decls, std::string_view key,
+                         int out_values[4], int& out_count) {
+    out_count = 0;
+    std::size_t pos = 0;
+    while (pos < decls.size()) {
+        const auto kp = decls.find(key, pos);
+        if (kp == std::string_view::npos) return false;
+        const bool at_boundary =
+            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
+        if (!at_boundary) { pos = kp + 1; continue; }
+        auto rest = decls.substr(kp + key.size());
+        rest = ltrim_ws(rest);
+        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
+        rest = ltrim_ws(rest.substr(1));
+        // Now read up to 4 integer values separated by whitespace.
+        while (out_count < 4 && !rest.empty() && rest.front() != ';' &&
+               rest.front() != '/') {
+            int v = 0; bool any = false;
+            while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
+                v = v * 10 + (rest.front() - '0');
+                rest.remove_prefix(1);
+                any = true;
+            }
+            if (!any) break;
+            out_values[out_count++] = v;
+            // Skip unit (px) + whitespace.
+            while (!rest.empty() &&
+                   ((rest.front() >= 'a' && rest.front() <= 'z') ||
+                    (rest.front() >= 'A' && rest.front() <= 'Z') ||
+                    rest.front() == '%')) {
+                rest.remove_prefix(1);
+            }
+            rest = ltrim_ws(rest);
+        }
+        return out_count > 0;
+    }
+    return false;
+}
+
 // Find `key: <token>` and return the first comma/semicolon-delimited
 // token, with surrounding whitespace and any wrapping ' or " stripped.
 // Used to extract the first family name from `font-family: <list>`.
@@ -704,7 +753,25 @@ std::string find_decl_first_ident(std::string_view decls,
 // entry per comma-separated group.
 void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
     for (const auto& raw : split_css_rules(css)) {
-        const int  radius = find_decl_px(raw.decls, "border-radius");
+        int radii[4] = {-1, -1, -1, -1};
+        int radius_count = 0;
+        const bool has_radius =
+            find_decl_px_values(raw.decls, "border-radius", radii, radius_count);
+        // CSS pairing for 1/2/3/4-value border-radius:
+        //   1 → TL=TR=BR=BL
+        //   2 → TL=BR=v0, TR=BL=v1
+        //   3 → TL=v0, TR=BL=v1, BR=v2
+        //   4 → TL,TR,BR,BL = v0..v3
+        int r_tl = -1, r_tr = -1, r_br = -1, r_bl = -1;
+        if (has_radius) {
+            switch (radius_count) {
+                case 1: r_tl = r_tr = r_br = r_bl = radii[0]; break;
+                case 2: r_tl = r_br = radii[0]; r_tr = r_bl = radii[1]; break;
+                case 3: r_tl = radii[0]; r_tr = r_bl = radii[1]; r_br = radii[2]; break;
+                default: r_tl = radii[0]; r_tr = radii[1];
+                         r_br = radii[2]; r_bl = radii[3]; break;
+            }
+        }
         const auto bc     = find_decl_hex(raw.decls, "border-color");
         const int  gap    = find_decl_px(raw.decls, "gap");
         // `background` shorthand. find_decl_hex's boundary check
@@ -717,7 +784,7 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
         // that has a face installed; our resolver does a similar
         // fallback inside resolve_font when the name doesn't match.
         const auto ff     = find_decl_first_ident(raw.decls, "font-family");
-        if (radius < 0 && !bc.second && gap < 0 && !bg.second &&
+        if (!has_radius && !bc.second && gap < 0 && !bg.second &&
             ff.empty()) continue;
 
         // Each comma-separated group becomes its own RuleFill.
@@ -733,15 +800,19 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
                 std::vector<CompoundSelector> ancestors;
                 if (parse_static_selector(group, target, ancestors)) {
                     RuleFill rf;
-                    rf.target            = std::move(target);
-                    rf.ancestors         = std::move(ancestors);
-                    rf.border_radius_px  = radius;
-                    rf.gap_px            = gap;
-                    rf.border_rgba       = bc.first;
-                    rf.has_border_color  = bc.second;
-                    rf.background_rgba   = bg.first;
-                    rf.has_background    = bg.second;
-                    rf.font_family       = ff;
+                    rf.target               = std::move(target);
+                    rf.ancestors            = std::move(ancestors);
+                    rf.border_radius_tl_px  = r_tl;
+                    rf.border_radius_tr_px  = r_tr;
+                    rf.border_radius_br_px  = r_br;
+                    rf.border_radius_bl_px  = r_bl;
+                    rf.has_border_radius    = has_radius;
+                    rf.gap_px               = gap;
+                    rf.border_rgba          = bc.first;
+                    rf.has_border_color     = bc.second;
+                    rf.background_rgba      = bg.first;
+                    rf.has_background       = bg.second;
+                    rf.font_family          = ff;
                     out.push_back(std::move(rf));
                 }
             }
@@ -817,6 +888,46 @@ inline int parse_border_radius_inline(lxb_dom_element_t* elem) {
 }
 inline int parse_gap_inline(lxb_dom_element_t* elem) {
     return scan_inline_px_property(elem, "gap");
+}
+
+// Multi-value inline-style scanner: same shape as scan_inline_px_property
+// but reads up to 4 successive integer values. Returns the count
+// (0..4) actually parsed; result indices > count are left untouched.
+int scan_inline_px_values(lxb_dom_element_t* elem,
+                          std::string_view key,
+                          int out[4]) {
+    size_t len = 0;
+    const lxb_char_t* attr = lxb_dom_element_get_attribute(
+        elem,
+        reinterpret_cast<const lxb_char_t*>("style"), 5,
+        &len);
+    if (!attr || len == 0) return 0;
+    std::string_view s(reinterpret_cast<const char*>(attr), len);
+    const auto pos = s.find(key);
+    if (pos == std::string_view::npos) return 0;
+    auto rest = s.substr(pos + key.size());
+    while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
+    if (rest.empty() || rest.front() != ':') return 0;
+    rest.remove_prefix(1);
+    int count = 0;
+    while (count < 4 && !rest.empty() && rest.front() != ';') {
+        while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
+        if (rest.empty() || rest.front() < '0' || rest.front() > '9') break;
+        int v = 0;
+        while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
+            v = v * 10 + (rest.front() - '0');
+            rest.remove_prefix(1);
+        }
+        out[count++] = v;
+        // Skip a unit (e.g. "px", "%") then continue to next number.
+        while (!rest.empty() &&
+               ((rest.front() >= 'a' && rest.front() <= 'z') ||
+                (rest.front() >= 'A' && rest.front() <= 'Z') ||
+                rest.front() == '%')) {
+            rest.remove_prefix(1);
+        }
+    }
+    return count;
 }
 
 // Keyword-value variant of the inline-style scanner. Returns the
@@ -937,9 +1048,16 @@ void collect_blocks(detail::DocumentImpl& impl,
                 continue;
             if (!ancestor_chain_matches(rf.ancestors, parent_idx,
                                         impl.blocks)) continue;
-            if (rf.border_radius_px >= 0)
-                rs.computed.border_radius_px =
-                    static_cast<std::int16_t>(rf.border_radius_px);
+            if (rf.has_border_radius) {
+                rs.computed.border_radius_top_left_px =
+                    static_cast<std::int16_t>(rf.border_radius_tl_px);
+                rs.computed.border_radius_top_right_px =
+                    static_cast<std::int16_t>(rf.border_radius_tr_px);
+                rs.computed.border_radius_bot_right_px =
+                    static_cast<std::int16_t>(rf.border_radius_br_px);
+                rs.computed.border_radius_bot_left_px =
+                    static_cast<std::int16_t>(rf.border_radius_bl_px);
+            }
             if (rf.gap_px >= 0) {
                 rs.computed.row_gap    = static_cast<std::int16_t>(rf.gap_px);
                 rs.computed.column_gap = static_cast<std::int16_t>(rf.gap_px);
@@ -958,10 +1076,25 @@ void collect_blocks(detail::DocumentImpl& impl,
 
         // Inline scans for properties lexbor 2.4 doesn't expose via
         // the CSS module. Lives here next to where the cascade
-        // results are committed.
-        if (const int r = parse_border_radius_inline(elem); r >= 0) {
-            impl.style_store.computed(id).border_radius_px =
-                static_cast<std::int16_t>(r);
+        // results are committed. Multi-value border-radius uses the
+        // same CSS pairing rules as the gap-fill scanner.
+        {
+            int rv[4] = {0, 0, 0, 0};
+            const int n = scan_inline_px_values(elem, "border-radius", rv);
+            if (n > 0) {
+                int tl = 0, tr = 0, br = 0, bl = 0;
+                switch (n) {
+                    case 1: tl = tr = br = bl = rv[0]; break;
+                    case 2: tl = br = rv[0]; tr = bl = rv[1]; break;
+                    case 3: tl = rv[0]; tr = bl = rv[1]; br = rv[2]; break;
+                    default: tl = rv[0]; tr = rv[1]; br = rv[2]; bl = rv[3]; break;
+                }
+                auto& cs = impl.style_store.computed(id);
+                cs.border_radius_top_left_px  = static_cast<std::int16_t>(tl);
+                cs.border_radius_top_right_px = static_cast<std::int16_t>(tr);
+                cs.border_radius_bot_right_px = static_cast<std::int16_t>(br);
+                cs.border_radius_bot_left_px  = static_cast<std::int16_t>(bl);
+            }
         }
         if (const int g = parse_gap_inline(elem); g >= 0) {
             impl.style_store.computed(id).row_gap    = static_cast<std::int16_t>(g);
@@ -1300,7 +1433,12 @@ void Document::draw(Painter& painter) {
                 static_cast<std::size_t>(clip_idx)].bounds);
         }
 
-        const float radius = static_cast<float>(cs.border_radius_px);
+        const float r_tl = static_cast<float>(cs.border_radius_top_left_px);
+        const float r_tr = static_cast<float>(cs.border_radius_top_right_px);
+        const float r_br = static_cast<float>(cs.border_radius_bot_right_px);
+        const float r_bl = static_cast<float>(cs.border_radius_bot_left_px);
+        const bool any_radius  = (r_tl > 0 || r_tr > 0 || r_br > 0 || r_bl > 0);
+        const bool uniform_r   = (r_tl == r_tr && r_tr == r_br && r_br == r_bl);
         const bool has_bg = (an.background_rgba & 0xFFu) != 0;
         const bool has_border =
             cs.border_style != detail::ComputedStyle::BorderStyle::None
@@ -1310,8 +1448,10 @@ void Document::draw(Painter& painter) {
 
         if (has_bg) {
             const Color bg = detail::unpack_rgba(an.background_rgba);
-            if (radius > 0.0f) painter.fill_rounded_rect(eff, radius, bg);
-            else               painter.fill_rect(eff, bg);
+            if      (!any_radius)             painter.fill_rect(eff, bg);
+            else if (uniform_r)               painter.fill_rounded_rect(eff, r_tl, bg);
+            else                              painter.fill_rounded_rect_varying(
+                                                  eff, r_tl, r_tr, r_br, r_bl, bg);
         }
 
         if (has_border) {
@@ -1326,8 +1466,10 @@ void Document::draw(Painter& painter) {
                 eff.w - 2 * inset, eff.h - 2 * inset,
             };
             const Color bc = detail::unpack_rgba(an.border_rgba);
-            if (radius > 0.0f) painter.stroke_rounded_rect(stroke_r, radius, bc, thickness);
-            else               painter.stroke_rect(stroke_r, bc, thickness);
+            if      (!any_radius) painter.stroke_rect(stroke_r, bc, thickness);
+            else if (uniform_r)   painter.stroke_rounded_rect(stroke_r, r_tl, bc, thickness);
+            else                  painter.stroke_rounded_rect_varying(
+                                      stroke_r, r_tl, r_tr, r_br, r_bl, bc, thickness);
         }
 
         if (!b.text.empty()) {
@@ -1505,9 +1647,16 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
             continue;
         if (!ancestor_chain_matches(rf.ancestors, block.parent_idx, impl.blocks))
             continue;
-        if (rf.border_radius_px >= 0)
-            rs.computed.border_radius_px =
-                static_cast<std::int16_t>(rf.border_radius_px);
+        if (rf.has_border_radius) {
+            rs.computed.border_radius_top_left_px =
+                static_cast<std::int16_t>(rf.border_radius_tl_px);
+            rs.computed.border_radius_top_right_px =
+                static_cast<std::int16_t>(rf.border_radius_tr_px);
+            rs.computed.border_radius_bot_right_px =
+                static_cast<std::int16_t>(rf.border_radius_br_px);
+            rs.computed.border_radius_bot_left_px =
+                static_cast<std::int16_t>(rf.border_radius_bl_px);
+        }
         if (rf.gap_px >= 0) {
             rs.computed.row_gap    = static_cast<std::int16_t>(rf.gap_px);
             rs.computed.column_gap = static_cast<std::int16_t>(rf.gap_px);

@@ -32,6 +32,8 @@ public:
     void stroke_rect(const Rect&, Color, float) override {}
     void fill_rounded_rect(const Rect&, float, Color) override {}
     void stroke_rounded_rect(const Rect&, float, Color, float) override {}
+    void fill_rounded_rect_varying(const Rect&, float, float, float, float, Color) override {}
+    void stroke_rounded_rect_varying(const Rect&, float, float, float, float, Color, float) override {}
     std::uint32_t resolve_font(std::string_view, int, int, bool) override { return 0; }
     int           measure_text(std::uint32_t, std::string_view) override { return 0; }
     TextMetrics   text_metrics(std::uint32_t) override { return {}; }
@@ -102,6 +104,31 @@ public:
         nvgBeginPath(vg_);
         nvgRoundedRect(vg_, static_cast<float>(r.x), static_cast<float>(r.y),
                        static_cast<float>(r.w), static_cast<float>(r.h), radius);
+        nvgStrokeColor(vg_, to_nvg(c));
+        nvgStrokeWidth(vg_, w);
+        nvgStroke(vg_);
+    }
+
+    void fill_rounded_rect_varying(const Rect& r,
+                                   float tl, float tr, float br, float bl,
+                                   Color c) override {
+        nvgBeginPath(vg_);
+        nvgRoundedRectVarying(vg_,
+            static_cast<float>(r.x), static_cast<float>(r.y),
+            static_cast<float>(r.w), static_cast<float>(r.h),
+            tl, tr, br, bl);
+        nvgFillColor(vg_, to_nvg(c));
+        nvgFill(vg_);
+    }
+
+    void stroke_rounded_rect_varying(const Rect& r,
+                                     float tl, float tr, float br, float bl,
+                                     Color c, float w) override {
+        nvgBeginPath(vg_);
+        nvgRoundedRectVarying(vg_,
+            static_cast<float>(r.x), static_cast<float>(r.y),
+            static_cast<float>(r.w), static_cast<float>(r.h),
+            tl, tr, br, bl);
         nvgStrokeColor(vg_, to_nvg(c));
         nvgStrokeWidth(vg_, w);
         nvgStroke(vg_);

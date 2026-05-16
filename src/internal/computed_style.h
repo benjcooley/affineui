@@ -32,23 +32,28 @@ struct ComputedStyle {
     std::int16_t border_bottom {0};
     std::int16_t border_left   {0};
 
-    // ── Border style + radius (4 bytes) ───────────────────────────
+    // ── Border style + per-corner radius (10 bytes) ───────────────
     // Uniform border-style for Phase 2C — per-side styles land when
-    // the cascade splits them out. Radius is also uniform (single
-    // value applied to all four corners); per-corner CSS
-    // (`border-top-left-radius` etc.) is Phase 2D.
+    // the cascade splits them out. The four radii correspond to the
+    // CSS shorthand `border-radius: <tl> <tr> <br> <bl>`; CSS pairing
+    // rules (1/2/3-value forms) are applied in the gap-fill scanner.
+    // Setting `border_radius_*_px` to the same value across all four
+    // corners recovers the previous uniform behavior; the painter
+    // uses NanoVG's nvgRoundedRectVarying when corners differ.
     //
-    // `border_radius_px` strictly speaking doesn't affect layout —
-    // it only changes rasterization — so it could live in
-    // AnimatedStyle. Parking it here for now to keep border data
-    // grouped; will migrate if border-radius animations become a
-    // hot path. See docs/OPTIMIZATION.md § 1.1.
+    // Radii strictly speaking don't affect layout — they only change
+    // rasterization — so they could live in AnimatedStyle. Parking
+    // them here to keep border data grouped; will migrate if
+    // border-radius animations become a hot path.
     enum class BorderStyle : std::uint8_t {
         None = 0, Solid = 1, Dashed = 2, Dotted = 3,
     };
-    BorderStyle  border_style    {BorderStyle::None};
-    std::uint8_t pad_border_     {0};
-    std::int16_t border_radius_px{0};
+    BorderStyle  border_style              {BorderStyle::None};
+    std::uint8_t pad_border_               {0};
+    std::int16_t border_radius_top_left_px {0};
+    std::int16_t border_radius_top_right_px{0};
+    std::int16_t border_radius_bot_right_px{0};
+    std::int16_t border_radius_bot_left_px {0};
 
     // ── Layout sizing (10 bytes) ──────────────────────────────────
     std::int16_t width     {-1};  // -1 = auto

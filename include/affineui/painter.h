@@ -27,6 +27,14 @@ public:
     virtual void stroke_rect(const Rect& r, Color color, float w)     = 0;
     virtual void fill_rounded_rect(const Rect& r, float radius, Color color) = 0;
     virtual void stroke_rounded_rect(const Rect& r, float radius, Color color, float w) = 0;
+    /// Per-corner radii, top-left / top-right / bottom-right / bottom-left.
+    /// Falls back to the uniform variant when all four are equal.
+    virtual void fill_rounded_rect_varying(const Rect& r,
+                                           float tl, float tr, float br, float bl,
+                                           Color color) = 0;
+    virtual void stroke_rounded_rect_varying(const Rect& r,
+                                             float tl, float tr, float br, float bl,
+                                             Color color, float w) = 0;
 
     // ── Text ────────────────────────────────────────────────────────
     /// Returns an opaque font handle. Implementation-defined; zero means

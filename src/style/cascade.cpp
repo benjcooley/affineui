@@ -546,8 +546,11 @@ public:
             s.computed.padding_bottom = s.computed.padding_left = 0;
         s.computed.border_top = s.computed.border_right =
             s.computed.border_bottom = s.computed.border_left = 0;
-        s.computed.border_style     = ComputedStyle::BorderStyle::None;
-        s.computed.border_radius_px = 0;
+        s.computed.border_style              = ComputedStyle::BorderStyle::None;
+        s.computed.border_radius_top_left_px  = 0;
+        s.computed.border_radius_top_right_px = 0;
+        s.computed.border_radius_bot_right_px = 0;
+        s.computed.border_radius_bot_left_px  = 0;
         // Flex (non-inherited; reset to CSS initial values).
         s.computed.flex_direction   = ComputedStyle::FlexDirection::Row;
         s.computed.flex_wrap        = ComputedStyle::FlexWrap::NoWrap;
