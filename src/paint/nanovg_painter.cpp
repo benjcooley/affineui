@@ -110,7 +110,7 @@ public:
     std::uint32_t resolve_font(std::string_view family,
                                int               size_px,
                                int               weight,
-                               bool /*italic*/) override {
+                               bool              italic) override {
         // NanoVG addresses fonts by face id + a per-frame size. We pack
         // (face_id, size) into a handle so draw_text/measure_text can
         // reconstitute it without another lookup. Top bit of `size`
@@ -123,16 +123,24 @@ public:
         //              browsers do when no Medium variant is available)
         //   >= 600  →  the bold face if loaded, regular otherwise
         //
-        // The synth fallback gives weight 500 visible heavier strokes
-        // than regular without over-bolding to the full bold face. A
-        // real fix lands when we plumb variable-font weight axes
-        // (SFNS.ttf has a continuous weight axis baked in).
+        // Italic falls back through (italic + bold) → italic → bold →
+        // regular. Each combo is its own face — if a system lacks an
+        // italic variant the cascade silently uses the upright form
+        // (NanoVG has no synthetic-oblique path either).
         const std::string family_str(family);
         const bool        prefer_bold = weight >= 600;
         const bool        synth_bold  = (weight >= 500 && weight < 600);
 
         int face = -1;
-        if (prefer_bold) {
+        if (italic && prefer_bold) {
+            face = nvgFindFont(vg_, (family_str + "-bold-italic").c_str());
+            if (face < 0 && bold_italic_face_ >= 0) face = bold_italic_face_;
+        }
+        if (italic && face < 0) {
+            face = nvgFindFont(vg_, (family_str + "-italic").c_str());
+            if (face < 0 && italic_face_ >= 0) face = italic_face_;
+        }
+        if (face < 0 && prefer_bold) {
             face = nvgFindFont(vg_, (family_str + "-bold").c_str());
             if (face < 0 && bold_face_ >= 0) face = bold_face_;
         }
@@ -267,8 +275,10 @@ public:
 
     void pop_clip() override { nvgRestore(vg_); }
 
-    void set_default_face(int face) { default_face_ = face; }
-    void set_bold_face   (int face) { bold_face_    = face; }
+    void set_default_face    (int face) { default_face_     = face; }
+    void set_bold_face       (int face) { bold_face_        = face; }
+    void set_italic_face     (int face) { italic_face_      = face; }
+    void set_bold_italic_face(int face) { bold_italic_face_ = face; }
 
 private:
     // Handle bit layout (32 bits):
@@ -301,6 +311,8 @@ private:
     int                                          height_{0};
     int                                          default_face_{-1};
     int                                          bold_face_{-1};
+    int                                          italic_face_{-1};
+    int                                          bold_italic_face_{-1};
     std::unordered_map<std::string, int>         image_cache_;
 };
 
@@ -310,15 +322,16 @@ namespace detail {
 
 std::unique_ptr<Painter> make_nanovg_painter(NVGcontext* vg) {
     auto painter = std::make_unique<NanoVGPainter>(vg);
-    // If a default font has been registered with the context, surface
-    // it so handles without an explicit family fall back to it.
-    int face = nvgFindFont(vg, "sans");
-    if (face < 0) face = nvgFindFont(vg, "sans-serif");
-    if (face >= 0) painter->set_default_face(face);
-    // Same for the bold variant, if register_default_font installed it.
-    int bold = nvgFindFont(vg, "sans-bold");
-    if (bold < 0) bold = nvgFindFont(vg, "sans-serif-bold");
-    if (bold >= 0) painter->set_bold_face(bold);
+    // Pick up whichever faces register_default_font installed.
+    auto find = [&](const char* a, const char* b) {
+        int f = nvgFindFont(vg, a);
+        if (f < 0 && b) f = nvgFindFont(vg, b);
+        return f;
+    };
+    if (int f = find("sans", "sans-serif");              f >= 0) painter->set_default_face(f);
+    if (int f = find("sans-bold", "sans-serif-bold");    f >= 0) painter->set_bold_face(f);
+    if (int f = find("sans-italic", "sans-serif-italic"); f >= 0) painter->set_italic_face(f);
+    if (int f = find("sans-bold-italic", "sans-serif-bold-italic"); f >= 0) painter->set_bold_italic_face(f);
     return painter;
 }
 
@@ -378,6 +391,42 @@ std::string_view register_default_font(NVGcontext* vg) {
         {"C:/Windows/Fonts/calibrib.ttf",                         0},
 #endif
     };
+    // Italic + bold-italic. macOS face indices for Helvetica.ttc /
+    // HelveticaNeue.ttc are well known: 4 = oblique, 5 = bold oblique.
+    static constexpr FontCandidate kItalicCandidates[] = {
+#if defined(__APPLE__)
+        {"/System/Library/Fonts/HelveticaNeue.ttc",              4},
+        {"/System/Library/Fonts/Helvetica.ttc",                  4},
+        {"/System/Library/Fonts/Supplemental/Arial Italic.ttf",  0},
+        {"/Library/Fonts/Arial Italic.ttf",                      0},
+#elif defined(__linux__)
+        {"/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf", 0},
+        {"/usr/share/fonts/liberation/LiberationSans-Italic.ttf",   0},
+        {"/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf", 0},
+        {"/usr/share/fonts/noto/NotoSans-Italic.ttf",               0},
+#elif defined(_WIN32)
+        {"C:/Windows/Fonts/segoeuii.ttf",                         0},
+        {"C:/Windows/Fonts/ariali.ttf",                           0},
+        {"C:/Windows/Fonts/calibrii.ttf",                         0},
+#endif
+    };
+    static constexpr FontCandidate kBoldItalicCandidates[] = {
+#if defined(__APPLE__)
+        {"/System/Library/Fonts/HelveticaNeue.ttc",              5},
+        {"/System/Library/Fonts/Helvetica.ttc",                  5},
+        {"/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf", 0},
+        {"/Library/Fonts/Arial Bold Italic.ttf",                 0},
+#elif defined(__linux__)
+        {"/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf", 0},
+        {"/usr/share/fonts/liberation/LiberationSans-BoldItalic.ttf",   0},
+        {"/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf", 0},
+        {"/usr/share/fonts/noto/NotoSans-BoldItalic.ttf",               0},
+#elif defined(_WIN32)
+        {"C:/Windows/Fonts/segoeuiz.ttf",                         0},
+        {"C:/Windows/Fonts/arialbi.ttf",                          0},
+        {"C:/Windows/Fonts/calibriz.ttf",                         0},
+#endif
+    };
     auto load_one = [&](const char* name, FontCandidate c) {
         return (c.index == 0)
             ? nvgCreateFont       (vg, name, c.path)
@@ -396,6 +445,20 @@ std::string_view register_default_font(NVGcontext* vg) {
     for (FontCandidate c : kBoldCandidates) {
         if (load_one("sans-bold", c) >= 0) {
             load_one("sans-serif-bold", c);
+            break;
+        }
+    }
+    // Italic + bold-italic are also best-effort. If absent, the
+    // resolve_font cascade silently substitutes the upright form.
+    for (FontCandidate c : kItalicCandidates) {
+        if (load_one("sans-italic", c) >= 0) {
+            load_one("sans-serif-italic", c);
+            break;
+        }
+    }
+    for (FontCandidate c : kBoldItalicCandidates) {
+        if (load_one("sans-bold-italic", c) >= 0) {
+            load_one("sans-serif-bold-italic", c);
             break;
         }
     }

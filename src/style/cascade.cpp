@@ -385,6 +385,18 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
                 s.computed.font_size_px = static_cast<std::uint16_t>(px);
             break;
         }
+        case LXB_CSS_PROPERTY_FONT_STYLE: {
+            const auto* v =
+                static_cast<const lxb_css_property_font_style_t*>(d->u.user);
+            switch (v->type) {
+                case LXB_CSS_FONT_STYLE_NORMAL:  s.computed.font_style = 0; break;
+                case LXB_CSS_FONT_STYLE_ITALIC:  s.computed.font_style = 1; break;
+                case LXB_CSS_FONT_STYLE_OBLIQUE: s.computed.font_style = 2; break;
+                default: break;
+            }
+            s.computed.has.font_style = 1;
+            break;
+        }
         case LXB_CSS_PROPERTY_FONT_WEIGHT: {
             const auto* v =
                 static_cast<const lxb_css_property_font_weight_t*>(d->u.user);

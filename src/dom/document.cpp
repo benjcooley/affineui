@@ -1135,7 +1135,7 @@ void Document::layout(int viewport_width, int viewport_height,
         // painter's nvgTextBoxBounds per constraint width.
         if (measurer != nullptr) {
             in.font = measurer->resolve_font(
-                "sans-serif", cs.font_size_px, cs.font_weight, /*italic=*/false);
+                "sans-serif", cs.font_size_px, cs.font_weight, cs.font_style != 0);
             in.text = b.text;
             // Leave intrinsic_h_px = 0 — the measure callback supplies
             // the height instead.
@@ -1290,7 +1290,7 @@ void Document::draw(Painter& painter) {
 
         if (!b.text.empty()) {
             const auto font = painter.resolve_font(
-                "sans-serif", cs.font_size_px, cs.font_weight, /*italic=*/false);
+                "sans-serif", cs.font_size_px, cs.font_weight, cs.font_style != 0);
             const int text_x = eff.x + cs.border_left + cs.padding_left;
             const int text_y = eff.y + cs.border_top  + cs.padding_top;
             const float content_w = static_cast<float>(
