@@ -1480,9 +1480,15 @@ void Document::draw(Painter& painter) {
             // onto a new line). The block was already sized to match
             // the measure, so giving paint a single-pixel tolerance
             // matches the design intent without overflowing.
+            // Slack: nvgTextBoxBounds returns RENDERED bounds (ink
+            // extent) but nvgTextBox's word-wrap uses glyph ADVANCE
+            // widths. Advance > rendered for fonts with sub-pixel
+            // overhang, so passing exactly content_w would wrap text
+            // that measure said fits. A few pixels of slack covers
+            // the gap for typical UI fonts at typical sizes.
             painter.draw_text_box(font, Point{text_x, text_y}, b.text,
                                   detail::unpack_rgba(an.color_rgba),
-                                  content_w + 1.0f,
+                                  content_w + 4.0f,
                                   detail::effective_line_height_mult(cs));
         }
 
