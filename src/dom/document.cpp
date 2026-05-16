@@ -106,20 +106,22 @@ struct PseudoRule {
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
-// Lexbor 2.4 doesn't expose `border-radius`, `border-color`, or `gap`
-// — declarations for these are silently dropped at parse time. RuleFill
-// carries the values we recover via a raw-text pre-scan of each
-// attached stylesheet, keyed by the same CompoundSelector chain we use
-// for pseudo overlays. Applied after the base resolve but before
-// inline-style scans (which still win, matching CSS specificity for
-// `style=""`).
+// Lexbor 2.4 doesn't expose `border-radius`, `border-color`, `gap`,
+// or `background` (shorthand) — declarations for these are silently
+// dropped at parse time. RuleFill carries the values we recover via a
+// raw-text pre-scan of each attached stylesheet, keyed by the same
+// CompoundSelector chain we use for pseudo overlays. Applied after
+// the base resolve but before inline-style scans (which still win,
+// matching CSS specificity for `style=""`).
 struct RuleFill {
     CompoundSelector              target;
     std::vector<CompoundSelector> ancestors;
     int                           border_radius_px{-1};   // -1 = unset
     int                           gap_px{-1};             // -1 = unset
     std::uint32_t                 border_rgba{0};
+    std::uint32_t                 background_rgba{0};
     bool                          has_border_color{false};
+    bool                          has_background{false};
 };
 
 // Per-element state bits in StyleStore::state_bits(). :focus claims
@@ -673,7 +675,12 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
         const int radius = find_decl_px(raw.decls, "border-radius");
         const auto bc    = find_decl_hex(raw.decls, "border-color");
         const int gap    = find_decl_px(raw.decls, "gap");
-        if (radius < 0 && !bc.second && gap < 0) continue;
+        // `background` shorthand. find_decl_hex's boundary check
+        // requires `:` immediately (after optional ws), so the same
+        // call won't accidentally hit `background-color` — that's a
+        // separate property handled by lexbor's longhand path.
+        const auto bg    = find_decl_hex(raw.decls, "background");
+        if (radius < 0 && !bc.second && gap < 0 && !bg.second) continue;
 
         // Each comma-separated group becomes its own RuleFill.
         std::string_view sel_text = trim_css_ws(raw.selector);
@@ -694,6 +701,8 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
                     rf.gap_px            = gap;
                     rf.border_rgba       = bc.first;
                     rf.has_border_color  = bc.second;
+                    rf.background_rgba   = bg.first;
+                    rf.has_background    = bg.second;
                     out.push_back(std::move(rf));
                 }
             }
@@ -898,6 +907,8 @@ void collect_blocks(detail::DocumentImpl& impl,
             }
             if (rf.has_border_color)
                 rs.animated.border_rgba = rf.border_rgba;
+            if (rf.has_background)
+                rs.animated.background_rgba = rf.background_rgba;
         }
 
         impl.style_store.computed(id) = rs.computed;
@@ -1460,6 +1471,8 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
         }
         if (rf.has_border_color)
             rs.animated.border_rgba = rf.border_rgba;
+        if (rf.has_background)
+            rs.animated.background_rgba = rf.background_rgba;
     }
     impl.style_store.computed(block.id) = rs.computed;
     impl.style_store.animated(block.id) = rs.animated;
