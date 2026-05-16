@@ -1231,17 +1231,22 @@ void Document::set_html(std::string_view html) {
 
     // Use <body>'s resolved style as the parent for all blocks so
     // body-level CSS (e.g. `body { color: ... }`) inherits down.
+    // Store the resolved body style BACK into root_style so the
+    // dispatch-time restyle path (parent_resolved for parent_idx=-1)
+    // sees the same parent the initial collect used. Without this,
+    // hover-triggered restyles silently reset top-level blocks to
+    // the placeholder root color, leaking grey into things like h1
+    // that should be inheriting body's color.
     auto* body = lxb_html_document_body_element(impl_->doc);
-    detail::ResolvedStyle body_style = impl_->root_style;
     if (body) {
-        body_style = impl_->resolver->resolve(
+        impl_->root_style = impl_->resolver->resolve(
             lxb_dom_interface_element(lxb_dom_interface_node(body)),
             impl_->root_style);
     }
     collect_blocks(*impl_,
                    body ? lxb_dom_interface_node(body)
                         : lxb_dom_interface_node(impl_->doc),
-                   body_style,
+                   impl_->root_style,
                    /*parent_idx=*/-1);
 #endif
 }
@@ -1907,22 +1912,21 @@ void Document::tick_imm() {
     impl_->blocks.clear();
     impl_->style_store.reset();
 
-    detail::ResolvedStyle root_style{};
-    root_style.animated.color_rgba   = 0xDCDCE6FFu;
-    root_style.computed.font_size_px = 16;
-    root_style.computed.font_weight  = 400;
+    impl_->root_style                       = detail::ResolvedStyle{};
+    impl_->root_style.animated.color_rgba   = 0xDCDCE6FFu;
+    impl_->root_style.computed.font_size_px = 16;
+    impl_->root_style.computed.font_weight  = 400;
 
     auto* body = lxb_html_document_body_element(impl_->doc);
-    detail::ResolvedStyle body_style = root_style;
     if (body && impl_->resolver) {
-        body_style = impl_->resolver->resolve(
+        impl_->root_style = impl_->resolver->resolve(
             lxb_dom_interface_element(lxb_dom_interface_node(body)),
-            root_style);
+            impl_->root_style);
     }
     collect_blocks(*impl_,
                    body ? lxb_dom_interface_node(body)
                         : lxb_dom_interface_node(impl_->doc),
-                   body_style,
+                   impl_->root_style,
                    /*parent_idx=*/-1);
 
     // 3. Stale-state cleanup. Block indices have churned; hovered_idx
