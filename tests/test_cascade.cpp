@@ -157,4 +157,34 @@ TEST_CASE("font-size in px lands in ComputedStyle, not AnimatedStyle") {
     CHECK(rs.computed.font_size_px == 42);
 }
 
+TEST_CASE(":hover overlay layered via apply_decl_list updates the color") {
+    // Two sheets: the first is the base (always matched), the second
+    // is the :hover overlay (matched separately by our side-table).
+    // Lexbor's cascade skips the :hover rule for the base resolve
+    // because no `hover` HTML attribute is present on the element —
+    // verified by the first CHECK below. Applying the overlay's
+    // declarations via apply_decl_list then flips the color.
+    CssEnv env("<button>hi</button>");
+    env.attach("button { color: #00ff00; }");
+    env.attach("button:hover { color: #ff0000; }");
+    env.build_resolver();
+
+    auto* btn = env.find("button");
+    REQUIRE(btn != nullptr);
+
+    affineui::detail::ResolvedStyle rs = env.resolver->resolve(btn, {});
+    CHECK(rs.animated.color_rgba == rgba(0x00, 0xFF, 0x00));
+
+    // Pluck the :hover rule's declarations out of the second sheet
+    // and apply them as if the element had transitioned into the
+    // hovered state.
+    auto* hover_sheet = env.sheets.back();
+    auto* rule_list   = lxb_css_rule_list(hover_sheet->root);
+    REQUIRE(rule_list->first != nullptr);
+    auto* style_rule  = lxb_css_rule_style(rule_list->first);
+
+    env.resolver->apply_decl_list(style_rule->declarations, rs);
+    CHECK(rs.animated.color_rgba == rgba(0xFF, 0x00, 0x00));
+}
+
 #endif  // !AFFINEUI_STUB_BUILD

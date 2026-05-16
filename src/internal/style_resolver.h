@@ -10,6 +10,8 @@ struct lxb_html_document;
 typedef struct lxb_html_document lxb_html_document_t;
 struct lxb_dom_element;
 typedef struct lxb_dom_element lxb_dom_element_t;
+struct lxb_css_rule_declaration_list;
+typedef struct lxb_css_rule_declaration_list lxb_css_rule_declaration_list_t;
 
 namespace affineui::detail {
 
@@ -37,6 +39,15 @@ public:
     /// the dirty-bit caching described in DESIGN.md.
     virtual ResolvedStyle resolve(lxb_dom_element_t* element,
                                   const ResolvedStyle& parent) = 0;
+
+    /// Apply every declaration in `list` to `out` in source order.
+    /// Used by the :hover overlay pass to layer state-dependent rules
+    /// on top of an already-resolved base style without re-running the
+    /// full cascade. Caller is responsible for whether the rule's
+    /// selector should be applied at all.
+    virtual void apply_decl_list(
+        const lxb_css_rule_declaration_list_t* list,
+        ResolvedStyle& out) = 0;
 
     /// Mark an element's style cache entry dirty so the next
     /// `resolve()` call recomputes. Phase 2 doesn't yet propagate

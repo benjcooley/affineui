@@ -65,6 +65,24 @@ struct Block {
     Rect              bounds{};
 };
 
+#if !defined(AFFINEUI_STUB_BUILD)
+// :hover side-table entry. Populated by scan_hover_rules() at
+// stylesheet-attach time. We keep only the simple-selector subset
+// for MVP: a single tag/class/id identifier plus :hover. Descendant
+// combinators land in Phase 4 (will replay through lxb_selectors_find
+// against a state-aware match callback).
+struct HoverRule {
+    enum class Kind : std::uint8_t { Tag, Class, Id };
+    Kind                                          kind;
+    std::string                                   name;
+    const lxb_css_rule_declaration_list_t*        decls;
+};
+
+// Per-element :hover bit lives inside StyleStore::state_bits(). We
+// only claim bit 0 today; :active/:focus stake out bits 1/2 later.
+constexpr std::uint8_t kHoverStateBit = 1u << 0;
+#endif
+
 }  // namespace
 
 namespace detail {
@@ -79,8 +97,12 @@ struct DocumentImpl {
 
     // Interaction state. -1 = pointer is over no block (or off-window).
     // Updated by Document::dispatch; read by App to drive cursor +
-    // (future) :hover and click routing.
+    // :hover and click routing. `hovered_chain` is the ancestor chain
+    // of `hovered_idx` (deepest → root). Recomputed on every
+    // hover-changing event; diffed against the previous chain to
+    // toggle the :hover state bit per affected element.
     int                       hovered_idx{-1};
+    std::vector<int>          hovered_chain;
     Point                     last_mouse_pos{};
 
     // Immediate-mode runtime — lazily created on the first
@@ -95,6 +117,10 @@ struct DocumentImpl {
 #if !defined(AFFINEUI_STUB_BUILD)
     lxb_html_document_t*               doc{nullptr};
     std::vector<lxb_css_stylesheet_t*> sheets;
+    // :hover overlay rules — populated by scan_hover_rules() during
+    // attach. Pointers in `decls` reference rule data owned by the
+    // document's CSS memory pool; valid for the document's lifetime.
+    std::vector<HoverRule>             hover_rules;
     std::unique_ptr<StyleResolver>     resolver;
     ResolvedStyle                      root_style{};  // inheritance root
 #endif
@@ -232,6 +258,71 @@ void collect_style_text(lxb_dom_node_t* node, std::string& out) {
 // Parse + attach a single stylesheet string. Quietly tolerates parse
 // failures so a malformed user stylesheet doesn't take the whole
 // pipeline down.
+// Walk one stylesheet's parsed rules and pull out the :hover rules
+// we can apply via the overlay path. We accept only single-compound
+// selectors of the form `tag:hover` / `.cls:hover` / `#id:hover`
+// today; anything richer (descendant combinators, multiple class
+// joins, functional pseudos) is silently skipped and lands in the
+// Phase 4 polish pass.
+void scan_hover_rules(lxb_css_stylesheet_t* sst,
+                      std::vector<HoverRule>& out) {
+    if (!sst || !sst->root) return;
+    auto* rule_list = lxb_css_rule_list(sst->root);
+    for (auto* r = rule_list->first; r != nullptr; r = r->next) {
+        if (r->type != LXB_CSS_RULE_STYLE) continue;
+        auto* style = lxb_css_rule_style(r);
+
+        // selector is a comma-separated chain of compound chains.
+        for (auto* sl = style->selector; sl != nullptr; sl = sl->next) {
+            const lxb_css_selector_t* identifier = nullptr;
+            bool has_hover = false;
+            bool ok        = true;
+
+            for (auto* sel = sl->first; sel != nullptr; sel = sel->next) {
+                // Multi-compound (descendant/child/sibling combinator
+                // anywhere past the first simple) — out of MVP scope.
+                if (sel != sl->first &&
+                    sel->combinator != LXB_CSS_SELECTOR_COMBINATOR_CLOSE) {
+                    ok = false; break;
+                }
+
+                if (sel->type == LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS) {
+                    if (sel->u.pseudo.type ==
+                        LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER) {
+                        has_hover = true;
+                    } else {
+                        ok = false; break;  // some other pseudo — skip rule
+                    }
+                } else if (sel->type == LXB_CSS_SELECTOR_TYPE_ELEMENT ||
+                           sel->type == LXB_CSS_SELECTOR_TYPE_CLASS   ||
+                           sel->type == LXB_CSS_SELECTOR_TYPE_ID) {
+                    // Two identifiers in one compound (e.g. `.a.b:hover`)
+                    // — MVP intentionally drops it. Phase 4 widens.
+                    if (identifier) { ok = false; break; }
+                    identifier = sel;
+                } else {
+                    ok = false; break;
+                }
+            }
+
+            if (!ok || !has_hover || !identifier) continue;
+
+            HoverRule hr;
+            switch (identifier->type) {
+                case LXB_CSS_SELECTOR_TYPE_ELEMENT: hr.kind = HoverRule::Kind::Tag;   break;
+                case LXB_CSS_SELECTOR_TYPE_CLASS:   hr.kind = HoverRule::Kind::Class; break;
+                case LXB_CSS_SELECTOR_TYPE_ID:      hr.kind = HoverRule::Kind::Id;    break;
+                default: continue;
+            }
+            hr.name.assign(
+                reinterpret_cast<const char*>(identifier->name.data),
+                identifier->name.length);
+            hr.decls = style->declarations;
+            out.push_back(std::move(hr));
+        }
+    }
+}
+
 void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
     if (css.empty()) return;
     // Parse via the document's own CSS parser (pre-wired with the
@@ -245,6 +336,7 @@ void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
     if (!sst) return;
     if (lxb_html_document_stylesheet_attach(impl.doc, sst) == LXB_STATUS_OK) {
         impl.sheets.push_back(sst);
+        scan_hover_rules(sst, impl.hover_rules);
     } else {
         lxb_css_stylesheet_destroy(sst, true);
     }
@@ -365,7 +457,32 @@ void collect_blocks(detail::DocumentImpl& impl,
         // Resolve this element's style under the parent's resolved
         // style (so inheritance flows correctly down the tree).
         const auto id = impl.style_store.acquire(elem);
-        const auto rs = impl.resolver->resolve(elem, parent_style);
+        auto rs = impl.resolver->resolve(elem, parent_style);
+
+        // :hover overlay — at collect time, the bit is preserved from
+        // any previous hover state (state_bits survives reset/acquire).
+        // dispatch() will re-resolve affected blocks when the hover
+        // chain changes, so collect-time work is the steady-state path.
+        if (impl.style_store.state_bits(id) & kHoverStateBit) {
+            const auto match = [&](const HoverRule& rule) {
+                switch (rule.kind) {
+                    case HoverRule::Kind::Tag:   return rule.name == tag;
+                    case HoverRule::Kind::Id:    return rule.name ==
+                        attr_string(elem, "id");
+                    case HoverRule::Kind::Class: {
+                        const auto cls_attr = split_classes(
+                            attr_string(elem, "class"));
+                        return std::find(cls_attr.begin(), cls_attr.end(),
+                                         rule.name) != cls_attr.end();
+                    }
+                }
+                return false;
+            };
+            for (const auto& hr : impl.hover_rules) {
+                if (match(hr)) impl.resolver->apply_decl_list(hr.decls, rs);
+            }
+        }
+
         impl.style_store.computed(id) = rs.computed;
         impl.style_store.animated(id) = rs.animated;
 
@@ -429,6 +546,8 @@ void Document::set_html(std::string_view html) {
     // attached stylesheets, so destroying doc tears them down too.
     impl_->resolver.reset();
     impl_->sheets.clear();
+    impl_->hover_rules.clear();
+    impl_->hovered_chain.clear();
     if (impl_->doc) {
         lxb_html_document_destroy(impl_->doc);
         impl_->doc = nullptr;
@@ -671,6 +790,90 @@ int hit_test_blocks(const std::vector<Block>& blocks, int x, int y) {
 
 }  // namespace
 
+namespace {
+#if !defined(AFFINEUI_STUB_BUILD)
+// Build the ancestor chain (deepest → root) for the block at `idx`.
+// Walks parent_idx, which collect_blocks set up. Empty when idx == -1.
+std::vector<int> build_hover_chain(const std::vector<Block>& blocks, int idx) {
+    std::vector<int> chain;
+    while (idx >= 0) {
+        chain.push_back(idx);
+        idx = blocks[static_cast<std::size_t>(idx)].parent_idx;
+    }
+    return chain;
+}
+
+// Look up the resolved style of `block_idx`'s parent. Returns the
+// document's root style when there is no parent (top-level body).
+detail::ResolvedStyle parent_resolved(const detail::DocumentImpl& impl,
+                                      int block_idx) {
+    const int p = impl.blocks[static_cast<std::size_t>(block_idx)].parent_idx;
+    if (p < 0) return impl.root_style;
+    const auto pid = impl.blocks[static_cast<std::size_t>(p)].id;
+    detail::ResolvedStyle rs;
+    rs.computed = impl.style_store.computed(pid);
+    rs.animated = impl.style_store.animated(pid);
+    return rs;
+}
+
+// Re-resolve one block's style (paint-only properties), applying the
+// :hover overlay if the bit is set. We don't touch layout: :hover
+// affecting layout would require relayout-on-hover, which lands with
+// the broader restyle queue in Phase 4. Bounds in the block stay put.
+void restyle_block(detail::DocumentImpl& impl, int idx) {
+    auto& block = impl.blocks[static_cast<std::size_t>(idx)];
+    auto* elem  = impl.style_store.element_of(block.id);
+    if (!elem) return;
+    auto parent = parent_resolved(impl, idx);
+    auto rs     = impl.resolver->resolve(elem, parent);
+    if (impl.style_store.state_bits(block.id) & kHoverStateBit) {
+        for (const auto& hr : impl.hover_rules) {
+            const bool match = (hr.kind == HoverRule::Kind::Tag    && hr.name == block.tag)
+                            || (hr.kind == HoverRule::Kind::Id     && hr.name == block.elem_id)
+                            || (hr.kind == HoverRule::Kind::Class  &&
+                                std::find(block.classes.begin(), block.classes.end(),
+                                          hr.name) != block.classes.end());
+            if (match) impl.resolver->apply_decl_list(hr.decls, rs);
+        }
+    }
+    impl.style_store.computed(block.id) = rs.computed;
+    impl.style_store.animated(block.id) = rs.animated;
+    impl.paint_dirty = true;
+}
+
+// Update the hover chain in response to a pointer move. Returns true
+// when the chain changed (and therefore a repaint is required).
+bool refresh_hover_chain(detail::DocumentImpl& impl) {
+    auto new_chain = build_hover_chain(impl.blocks, impl.hovered_idx);
+    if (new_chain == impl.hovered_chain) return false;
+
+    // Diff: anything in old\new is leaving (clear bit + restyle), any
+    // in new\old is entering (set bit + restyle). Small chains, O(n*m)
+    // is fine. Sorting + set_diff is the upgrade if chains ever grow.
+    const auto in = [](int x, const std::vector<int>& v) {
+        return std::find(v.begin(), v.end(), x) != v.end();
+    };
+    for (int old_idx : impl.hovered_chain) {
+        if (in(old_idx, new_chain)) continue;
+        const auto id = impl.blocks[static_cast<std::size_t>(old_idx)].id;
+        impl.style_store.state_bits(id) &=
+            static_cast<std::uint8_t>(~kHoverStateBit);
+        restyle_block(impl, old_idx);
+    }
+    for (int new_idx : new_chain) {
+        if (in(new_idx, impl.hovered_chain)) continue;
+        const auto id = impl.blocks[static_cast<std::size_t>(new_idx)].id;
+        impl.style_store.state_bits(id) |= kHoverStateBit;
+        restyle_block(impl, new_idx);
+    }
+    impl.hovered_chain = std::move(new_chain);
+    return true;
+}
+#else  // stub build — no DOM, no hover bookkeeping
+bool refresh_hover_chain(detail::DocumentImpl&) { return false; }
+#endif
+}  // namespace
+
 DispatchResult Document::dispatch(const Event& ev) {
     DispatchResult result{};
     switch (ev.type) {
@@ -678,8 +881,15 @@ DispatchResult Document::dispatch(const Event& ev) {
             impl_->last_mouse_pos = ev.pos;
             const int new_hover = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
             if (new_hover != impl_->hovered_idx) {
-                impl_->hovered_idx   = new_hover;
-                result.redraw_requested = true;  // future :hover restyle will need this
+                impl_->hovered_idx      = new_hover;
+                result.redraw_requested = true;
+            }
+            // Refresh :hover chain even when hovered_idx didn't change —
+            // mouse may have moved within the same leaf block (no-op
+            // here) or the tree may have churned underneath us (rare,
+            // but cheap to verify).
+            if (refresh_hover_chain(*impl_)) {
+                result.redraw_requested = true;
             }
             break;
         }
@@ -689,6 +899,9 @@ DispatchResult Document::dispatch(const Event& ev) {
             // now: just refresh hover under the click point.
             impl_->last_mouse_pos = ev.pos;
             impl_->hovered_idx    = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
+            if (refresh_hover_chain(*impl_)) {
+                result.redraw_requested = true;
+            }
             break;
         default:
             break;

@@ -467,6 +467,18 @@ public:
         return s;
     }
 
+    void apply_decl_list(const lxb_css_rule_declaration_list_t* list,
+                         ResolvedStyle& out) override {
+        if (!list) return;
+        // Each declaration in the list is an lxb_css_rule_t-derived
+        // node; iterate via the base ->next pointer (the list's storage
+        // is the same intrusive chain lexbor uses for any rule list).
+        for (auto* node = list->first; node != nullptr; node = node->next) {
+            apply_declaration(
+                reinterpret_cast<const lxb_css_rule_declaration_t*>(node), out);
+        }
+    }
+
     void invalidate(lxb_dom_element_t*) override {
         // Phase 2A is uncached — nothing to invalidate.
     }

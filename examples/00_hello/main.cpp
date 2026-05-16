@@ -35,6 +35,11 @@ int main() {
                     margin: 16px 0; }
             .clickable { background-color: #1e1e2e;
                          border: 1px solid #f38ba8; }
+            /* :hover lights up the clickable card. Goes through the
+               side-table overlay path in src/dom/document.cpp.
+               Single-compound selectors only for MVP (a `.clickable:hover h1`
+               descendant rule would be silently skipped today). */
+            .clickable:hover { background-color: #f38ba8; }
             h1 { color: #f38ba8; font-size: 28px;
                  margin: 0 0 8px 0; }
             p  { color: #a6adc8; font-size: 16px; margin: 0; }
