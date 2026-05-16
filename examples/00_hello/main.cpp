@@ -35,14 +35,20 @@ int main() {
                     margin: 16px 0; }
             .clickable { background-color: #1e1e2e;
                          border: 1px solid #f38ba8; }
-            /* :hover lights up the clickable card. :active darkens
-               it on mouse-down (release returns to :hover). Goes
-               through the side-table overlay path in
-               src/dom/document.cpp. Single-compound selectors only
-               for MVP — a `.clickable:hover h1` descendant rule
-               would be silently skipped today. */
-            .clickable:hover  { background-color: #f38ba8; }
-            .clickable:active { background-color: #cc7a93; }
+            /* Pseudo-class overlays — :hover and :active drive a
+               background-color flip through the side-table overlay
+               path in src/dom/document.cpp.
+
+               Grammar today: simple selectors joined by
+                 - AND'd simples in a compound: `.card.clickable:hover`
+                 - descendant combinator: `.card h1:hover`
+               `>`, `+`, `~`, attribute selectors, and functional
+               pseudos still land in a later pass. */
+            .card.clickable:hover  { background-color: #f38ba8; }
+            .card.clickable:active { background-color: #cc7a93; }
+            /* Descendant: hover on the title only when it's inside
+               the clickable card. Plain-card h1 stays put. */
+            .clickable h1:hover    { color: #1e1e2e; }
             h1 { color: #f38ba8; font-size: 28px;
                  margin: 0 0 8px 0; }
             p  { color: #a6adc8; font-size: 16px; margin: 0; }

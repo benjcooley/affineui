@@ -66,18 +66,30 @@ struct Block {
 };
 
 #if !defined(AFFINEUI_STUB_BUILD)
-// CSS pseudo-class side-table entry. Populated by scan_pseudo_rules()
-// at stylesheet-attach time. We keep only the simple-selector subset
-// for MVP: a single tag/class/id identifier plus exactly one of
-// :hover / :active. Descendant combinators + multi-simple compounds
-// (`.a.b:hover`) land in Phase 4 via lxb_selectors_find with a state-
-// aware match callback.
+// CSS pseudo-class side-table entry, parsed out of attached
+// stylesheets by scan_pseudo_rules(). Each compound is the AND of
+// one-or-more simple identifiers (tag/class/id). The chain is
+// `target` (must match the hovered/active element) plus zero-or-more
+// `ancestors` walked deepest → root with descendant-combinator gaps.
+//
+// Today's grammar: simple selectors + descendant combinator only.
+// `>`, `+`, `~`, attribute selectors, and functional pseudos are
+// silently skipped at scan time.
+struct SimpleSelector {
+    enum class Kind : std::uint8_t { Tag, Class, Id };
+    Kind        kind;
+    std::string name;
+};
+
+struct CompoundSelector {
+    std::vector<SimpleSelector> simples;  // AND'd together
+};
+
 struct PseudoRule {
     enum class Pseudo : std::uint8_t { Hover, Active };
-    enum class Kind   : std::uint8_t { Tag, Class, Id };
     Pseudo                                        pseudo;
-    Kind                                          kind;
-    std::string                                   name;
+    CompoundSelector                              target;
+    std::vector<CompoundSelector>                 ancestors;  // nearest → root
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
@@ -266,11 +278,51 @@ void collect_style_text(lxb_dom_node_t* node, std::string& out) {
 // failures so a malformed user stylesheet doesn't take the whole
 // pipeline down.
 // Walk one stylesheet's parsed rules and pull out :hover / :active
-// rules we can apply via the overlay path. MVP accepts only single-
-// compound selectors of the form `tag:hover` / `.cls:hover` /
-// `#id:hover` (and same for :active). Anything richer (descendant
-// combinators, multi-simple compounds, functional pseudos) is
-// silently skipped and lands in the Phase 4 polish pass.
+// rules we can apply via the overlay path. Today's grammar:
+//   - one or more compounds joined by descendant combinator
+//   - each compound is one or more simple selectors (tag/class/id) AND'd
+//   - exactly one :hover or :active pseudo in the LAST compound (the
+//     "target" — the element whose state flips the rule on)
+// Anything else (`>`, `+`, `~`, attribute selectors, functional
+// pseudos, the pseudo on a non-target compound) is silently skipped.
+// One compound matches when every one of its simples matches.
+bool compound_matches(const CompoundSelector& compound,
+                      std::string_view tag,
+                      std::string_view elem_id,
+                      const std::vector<std::string>& classes) {
+    for (const auto& s : compound.simples) {
+        switch (s.kind) {
+            case SimpleSelector::Kind::Tag:
+                if (s.name != tag) return false; break;
+            case SimpleSelector::Kind::Id:
+                if (s.name != elem_id) return false; break;
+            case SimpleSelector::Kind::Class:
+                if (std::find(classes.begin(), classes.end(), s.name)
+                    == classes.end()) return false;
+                break;
+        }
+    }
+    return true;
+}
+
+// Walk up `parent_idx` through `blocks`, greedy-matching each ancestor
+// compound in order. Returns true when all ancestors have been
+// satisfied (gaps are allowed — descendant combinator semantics).
+bool ancestor_chain_matches(const std::vector<CompoundSelector>& ancestors,
+                            int parent_idx,
+                            const std::vector<Block>& blocks) {
+    std::size_t i = 0;
+    int idx = parent_idx;
+    while (i < ancestors.size() && idx >= 0) {
+        const auto& a = blocks[static_cast<std::size_t>(idx)];
+        if (compound_matches(ancestors[i], a.tag, a.elem_id, a.classes)) {
+            ++i;
+        }
+        idx = a.parent_idx;
+    }
+    return i == ancestors.size();
+}
+
 void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
                        std::vector<PseudoRule>& out) {
     if (!sst || !sst->root) return;
@@ -279,19 +331,32 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
         if (r->type != LXB_CSS_RULE_STYLE) continue;
         auto* style = lxb_css_rule_style(r);
 
-        // selector is a comma-separated chain of compound chains.
+        // `selector` is a comma-separated chain of compound chains;
+        // walk each group independently — each becomes its own rule.
         for (auto* sl = style->selector; sl != nullptr; sl = sl->next) {
-            const lxb_css_selector_t* identifier = nullptr;
-            bool                       has_pseudo = false;
-            PseudoRule::Pseudo         pseudo{};
-            bool                       ok = true;
+            // Build the chain of compounds for this group.
+            std::vector<CompoundSelector> compounds;
+            CompoundSelector              current;
+            PseudoRule::Pseudo            pseudo{};
+            bool                          has_pseudo  = false;
+            bool                          pseudo_seen_in_last = false;
+            bool                          ok          = true;
 
             for (auto* sel = sl->first; sel != nullptr; sel = sel->next) {
-                // Multi-compound (descendant/child/sibling combinator
-                // anywhere past the first simple) — out of MVP scope.
-                if (sel != sl->first &&
-                    sel->combinator != LXB_CSS_SELECTOR_COMBINATOR_CLOSE) {
-                    ok = false; break;
+                const bool starts_new_compound =
+                    (sel != sl->first) &&
+                    (sel->combinator != LXB_CSS_SELECTOR_COMBINATOR_CLOSE);
+                if (starts_new_compound) {
+                    if (sel->combinator != LXB_CSS_SELECTOR_COMBINATOR_DESCENDANT) {
+                        // `>`, `+`, `~` — not in MVP grammar.
+                        ok = false; break;
+                    }
+                    if (pseudo_seen_in_last) {
+                        // pseudo must be in the last compound only.
+                        ok = false; break;
+                    }
+                    compounds.push_back(std::move(current));
+                    current = {};
                 }
 
                 if (sel->type == LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS) {
@@ -299,10 +364,10 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
                     switch (sel->u.pseudo.type) {
                         case LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER:
                             pseudo = PseudoRule::Pseudo::Hover;
-                            has_pseudo = true; break;
+                            has_pseudo = true; pseudo_seen_in_last = true; break;
                         case LXB_CSS_SELECTOR_PSEUDO_CLASS_ACTIVE:
                             pseudo = PseudoRule::Pseudo::Active;
-                            has_pseudo = true; break;
+                            has_pseudo = true; pseudo_seen_in_last = true; break;
                         default:
                             ok = false; break;
                     }
@@ -310,28 +375,41 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
                 } else if (sel->type == LXB_CSS_SELECTOR_TYPE_ELEMENT ||
                            sel->type == LXB_CSS_SELECTOR_TYPE_CLASS   ||
                            sel->type == LXB_CSS_SELECTOR_TYPE_ID) {
-                    // Two identifiers in one compound (e.g. `.a.b:hover`)
-                    // — MVP intentionally drops it. Phase 4 widens.
-                    if (identifier) { ok = false; break; }
-                    identifier = sel;
+                    SimpleSelector s;
+                    switch (sel->type) {
+                        case LXB_CSS_SELECTOR_TYPE_ELEMENT: s.kind = SimpleSelector::Kind::Tag;   break;
+                        case LXB_CSS_SELECTOR_TYPE_CLASS:   s.kind = SimpleSelector::Kind::Class; break;
+                        case LXB_CSS_SELECTOR_TYPE_ID:      s.kind = SimpleSelector::Kind::Id;    break;
+                        default: ok = false; break;
+                    }
+                    if (!ok) break;
+                    s.name.assign(
+                        reinterpret_cast<const char*>(sel->name.data),
+                        sel->name.length);
+                    current.simples.push_back(std::move(s));
                 } else {
                     ok = false; break;
                 }
             }
 
-            if (!ok || !has_pseudo || !identifier) continue;
+            if (!ok || !has_pseudo) continue;
+            // The current compound is the target. It must have at
+            // least one identifier — `:hover { ... }` (universal)
+            // alone is not supported in MVP.
+            if (current.simples.empty()) continue;
+            compounds.push_back(std::move(current));
 
             PseudoRule pr;
             pr.pseudo = pseudo;
-            switch (identifier->type) {
-                case LXB_CSS_SELECTOR_TYPE_ELEMENT: pr.kind = PseudoRule::Kind::Tag;   break;
-                case LXB_CSS_SELECTOR_TYPE_CLASS:   pr.kind = PseudoRule::Kind::Class; break;
-                case LXB_CSS_SELECTOR_TYPE_ID:      pr.kind = PseudoRule::Kind::Id;    break;
-                default: continue;
+            pr.target = std::move(compounds.back());
+            compounds.pop_back();
+            // compounds left over are the ancestor constraints, with
+            // the OUTERMOST first in CSS source order. We want them
+            // nearest → root (reverse).
+            pr.ancestors.reserve(compounds.size());
+            for (auto it = compounds.rbegin(); it != compounds.rend(); ++it) {
+                pr.ancestors.push_back(std::move(*it));
             }
-            pr.name.assign(
-                reinterpret_cast<const char*>(identifier->name.data),
-                identifier->name.length);
             pr.decls = style->declarations;
             out.push_back(std::move(pr));
         }
@@ -478,27 +556,24 @@ void collect_blocks(detail::DocumentImpl& impl,
         // bits are preserved from any prior interaction state (they
         // survive reset/acquire). dispatch() re-resolves affected
         // blocks when chains change, so collect-time work is the
-        // steady-state path.
+        // steady-state path. The block's parent_idx is `parent_idx`
+        // (function arg), and impl.blocks already contains everything
+        // up to but not including this element — exactly what
+        // ancestor_chain_matches needs to walk.
         const auto sb_at_collect = impl.style_store.state_bits(id);
         if (sb_at_collect != 0 && !impl.pseudo_rules.empty()) {
             const auto elem_id_attr = attr_string(elem, "id");
             const auto cls_attr     = split_classes(attr_string(elem, "class"));
-            const auto match = [&](const PseudoRule& rule) {
-                switch (rule.kind) {
-                    case PseudoRule::Kind::Tag:   return rule.name == tag;
-                    case PseudoRule::Kind::Id:    return rule.name == elem_id_attr;
-                    case PseudoRule::Kind::Class:
-                        return std::find(cls_attr.begin(), cls_attr.end(),
-                                         rule.name) != cls_attr.end();
-                }
-                return false;
-            };
             for (const auto& pr : impl.pseudo_rules) {
                 const std::uint8_t bit =
                     (pr.pseudo == PseudoRule::Pseudo::Hover)
                         ? kHoverStateBit : kActiveStateBit;
                 if (!(sb_at_collect & bit)) continue;
-                if (match(pr)) impl.resolver->apply_decl_list(pr.decls, rs);
+                if (!compound_matches(pr.target, tag, elem_id_attr, cls_attr))
+                    continue;
+                if (!ancestor_chain_matches(pr.ancestors, parent_idx,
+                                            impl.blocks)) continue;
+                impl.resolver->apply_decl_list(pr.decls, rs);
             }
         }
 
@@ -848,13 +923,11 @@ void apply_pseudo_overlay(detail::DocumentImpl& impl, const Block& block,
         const std::uint8_t bit = (pr.pseudo == PseudoRule::Pseudo::Hover)
             ? kHoverStateBit : kActiveStateBit;
         if (!(sb & bit)) continue;
-        const bool match =
-               (pr.kind == PseudoRule::Kind::Tag   && pr.name == block.tag)
-            || (pr.kind == PseudoRule::Kind::Id    && pr.name == block.elem_id)
-            || (pr.kind == PseudoRule::Kind::Class &&
-                std::find(block.classes.begin(), block.classes.end(),
-                          pr.name) != block.classes.end());
-        if (match) impl.resolver->apply_decl_list(pr.decls, rs);
+        if (!compound_matches(pr.target, block.tag, block.elem_id,
+                              block.classes)) continue;
+        if (!ancestor_chain_matches(pr.ancestors, block.parent_idx,
+                                    impl.blocks)) continue;
+        impl.resolver->apply_decl_list(pr.decls, rs);
     }
 }
 
