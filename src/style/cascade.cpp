@@ -385,6 +385,36 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
                 s.computed.font_size_px = static_cast<std::uint16_t>(px);
             break;
         }
+        case LXB_CSS_PROPERTY_WIDTH: {
+            const auto* v =
+                static_cast<const lxb_css_property_width_t*>(d->u.user);
+            int px = 0;
+            if (parse_length_px(v, px) && px >= 0)
+                s.computed.width = static_cast<std::int16_t>(px);
+            break;
+        }
+        case LXB_CSS_PROPERTY_HEIGHT: {
+            const auto* v =
+                static_cast<const lxb_css_property_height_t*>(d->u.user);
+            int px = 0;
+            if (parse_length_px(v, px) && px >= 0)
+                s.computed.height = static_cast<std::int16_t>(px);
+            break;
+        }
+        case LXB_CSS_PROPERTY_OVERFLOW_Y: {
+            const auto* v =
+                static_cast<const lxb_css_property_overflow_y_t*>(d->u.user);
+            using O = ComputedStyle::Overflow;
+            switch (v->type) {
+                case LXB_CSS_OVERFLOW_Y_VISIBLE: s.computed.overflow_y = O::Visible; break;
+                case LXB_CSS_OVERFLOW_Y_HIDDEN:  s.computed.overflow_y = O::Hidden;  break;
+                case LXB_CSS_OVERFLOW_Y_CLIP:    s.computed.overflow_y = O::Clip;    break;
+                case LXB_CSS_OVERFLOW_Y_SCROLL:  s.computed.overflow_y = O::Scroll;  break;
+                case LXB_CSS_OVERFLOW_Y_AUTO:    s.computed.overflow_y = O::Auto;    break;
+                default: break;
+            }
+            break;
+        }
         // Everything else lands when we have a test for it.
         default:
             break;

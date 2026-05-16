@@ -63,6 +63,13 @@ struct Block {
     std::string       text;
     int               parent_idx{-1};
     Rect              bounds{};
+    // Scroll state. Only meaningful when ComputedStyle.overflow_y is
+    // Scroll or Auto. content_h is the total height of descendant
+    // content measured from this block's bounds.y — i.e. how far the
+    // user can scroll before the bottom of the deepest descendant
+    // clears the visible window.
+    int               scroll_y{0};
+    int               content_h{0};
 };
 
 #if !defined(AFFINEUI_STUB_BUILD)
@@ -777,7 +784,35 @@ void Document::layout(int viewport_width, Painter* measurer) {
         if (bottom > max_bottom) max_bottom = bottom;
     }
     impl_->content_size = Size{viewport_width, max_bottom + kPagePadding};
+
+    // Compute per-block content_h = max(child bottom edge) - own top.
+    // Used by the scroll path: how far the user can scroll before the
+    // last descendant clears the visible region. Iterate children in
+    // doc order; each parent gets the max bottom of all its
+    // descendants (transitive: child's content already reflects its
+    // own descendants).
+    for (auto& b : impl_->blocks) b.content_h = b.bounds.h;
+    for (std::size_t i = impl_->blocks.size(); i-- > 0; ) {
+        const auto& child = impl_->blocks[i];
+        if (child.parent_idx < 0) continue;
+        auto& parent = impl_->blocks[static_cast<std::size_t>(child.parent_idx)];
+        const int child_bottom_in_parent =
+            (child.bounds.y - parent.bounds.y) + child.bounds.h;
+        if (child_bottom_in_parent > parent.content_h)
+            parent.content_h = child_bottom_in_parent;
+    }
 }
+
+// Forward decls — definitions live in the anonymous namespace below,
+// alongside the dispatch helpers. Used by Document::draw to compute
+// scroll offsets + clip rects for the paint walk.
+namespace {
+#if !defined(AFFINEUI_STUB_BUILD)
+bool block_is_scrollable_y(const detail::DocumentImpl& impl, int idx);
+int  scroll_offset_y_for(const std::vector<Block>& blocks,
+                         const detail::StyleStore& styles, int idx);
+#endif
+}  // namespace
 
 void Document::draw(Painter& painter) {
     // Document::draw paints through *any* Painter — could be the real
@@ -788,9 +823,31 @@ void Document::draw(Painter& painter) {
     // the box tree, fetches per-element ResolvedStyle from the
     // StyleStore, and emits Painter calls. No GL calls happen here
     // directly — that's the rasterize stage's job.
-    for (const auto& b : impl_->blocks) {
+    //
+    // Scroll: per-block, sum ancestor scroll_y to get the effective
+    // draw position. If any ancestor is a scrollable container, push
+    // its bounds as the clip rect for the duration of this block's
+    // draws so overflowing children stay inside the container.
+    for (std::size_t i = 0; i < impl_->blocks.size(); ++i) {
+        const auto& b  = impl_->blocks[i];
         const auto& cs = impl_->style_store.computed(b.id);
         const auto& an = impl_->style_store.animated(b.id);
+
+        const int dy = scroll_offset_y_for(impl_->blocks, impl_->style_store,
+                                           static_cast<int>(i));
+        const Rect eff{b.bounds.x, b.bounds.y - dy, b.bounds.w, b.bounds.h};
+
+        // Find the nearest scrollable ancestor so we can clip this
+        // block's draws to it. -1 if none.
+        int clip_idx = b.parent_idx;
+        while (clip_idx >= 0 && !block_is_scrollable_y(*impl_, clip_idx)) {
+            clip_idx = impl_->blocks[static_cast<std::size_t>(clip_idx)].parent_idx;
+        }
+        const bool clipped = (clip_idx >= 0);
+        if (clipped) {
+            painter.push_clip(impl_->blocks[
+                static_cast<std::size_t>(clip_idx)].bounds);
+        }
 
         const float radius = static_cast<float>(cs.border_radius_px);
         const bool has_bg = (an.background_rgba & 0xFFu) != 0;
@@ -800,25 +857,13 @@ void Document::draw(Painter& painter) {
                 || cs.border_bottom > 0 || cs.border_left > 0)
             && (an.border_rgba & 0xFFu) != 0;
 
-        // Background fill — common case is transparent (skip op
-        // entirely to keep idle display lists short and their hash
-        // stable). Uses the rounded variant when border-radius is
-        // non-zero so the background matches the border curve.
         if (has_bg) {
             const Color bg = detail::unpack_rgba(an.background_rgba);
-            if (radius > 0.0f) {
-                painter.fill_rounded_rect(b.bounds, radius, bg);
-            } else {
-                painter.fill_rect(b.bounds, bg);
-            }
+            if (radius > 0.0f) painter.fill_rounded_rect(eff, radius, bg);
+            else               painter.fill_rect(eff, bg);
         }
 
-        // Uniform border stroke. NanoVG centers strokes on the path
-        // edge — to align the outer edge with `bounds`, inset the
-        // stroke rect by half the thickness.
         if (has_border) {
-            // Phase 2C handles uniform borders only: pick the max
-            // declared side width as the stroke thickness.
             int wmax = cs.border_top;
             if (cs.border_right  > wmax) wmax = cs.border_right;
             if (cs.border_bottom > wmax) wmax = cs.border_bottom;
@@ -826,38 +871,53 @@ void Document::draw(Painter& painter) {
             const float thickness = static_cast<float>(wmax);
             const int   inset     = wmax / 2;
             const Rect  stroke_r{
-                b.bounds.x + inset, b.bounds.y + inset,
-                b.bounds.w - 2 * inset, b.bounds.h - 2 * inset,
+                eff.x + inset, eff.y + inset,
+                eff.w - 2 * inset, eff.h - 2 * inset,
             };
             const Color bc = detail::unpack_rgba(an.border_rgba);
-            if (radius > 0.0f) {
-                painter.stroke_rounded_rect(stroke_r, radius, bc, thickness);
-            } else {
-                painter.stroke_rect(stroke_r, bc, thickness);
-            }
+            if (radius > 0.0f) painter.stroke_rounded_rect(stroke_r, radius, bc, thickness);
+            else               painter.stroke_rect(stroke_r, bc, thickness);
         }
 
-        if (b.text.empty()) continue;
+        if (!b.text.empty()) {
+            const auto font = painter.resolve_font(
+                "sans-serif", cs.font_size_px, cs.font_weight, /*italic=*/false);
+            const int text_x = eff.x + cs.border_left + cs.padding_left;
+            const int text_y = eff.y + cs.border_top  + cs.padding_top;
+            const float content_w = static_cast<float>(
+                eff.w - cs.border_left - cs.border_right
+                      - cs.padding_left - cs.padding_right);
+            painter.draw_text_box(font, Point{text_x, text_y}, b.text,
+                                  detail::unpack_rgba(an.color_rgba),
+                                  content_w);
+        }
 
-        const auto font = painter.resolve_font(
-            "sans-serif",
-            cs.font_size_px,
-            cs.font_weight,
-            /*italic=*/false);
+        if (clipped) painter.pop_clip();
+    }
 
-        // Yoga returns the border-box; CSS text lives inside the
-        // content-box, which is border-box minus border-width minus
-        // padding on each side. We pass the content-box width as the
-        // wrap bound — nvgTextBox breaks lines at exactly that width,
-        // matching what nvgTextBoxBounds reported during layout.
-        const int text_x = b.bounds.x + cs.border_left + cs.padding_left;
-        const int text_y = b.bounds.y + cs.border_top  + cs.padding_top;
-        const float content_w = static_cast<float>(
-            b.bounds.w - cs.border_left - cs.border_right
-                       - cs.padding_left - cs.padding_right);
-        painter.draw_text_box(font, Point{text_x, text_y}, b.text,
-                              detail::unpack_rgba(an.color_rgba),
-                              content_w);
+    // Scrollbar overlay — drawn last so it sits on top of any
+    // clipped content. A simple right-side thumb showing how far
+    // we've scrolled; track is transparent.
+    for (const auto& b : impl_->blocks) {
+        if (!block_is_scrollable_y(*impl_, static_cast<int>(&b - impl_->blocks.data())))
+            continue;
+        const int track_w  = 6;
+        const int track_pad = 2;
+        const int track_x  = b.bounds.x + b.bounds.w - track_w - track_pad;
+        const int track_y  = b.bounds.y + track_pad;
+        const int track_h  = b.bounds.h - 2 * track_pad;
+        const float ratio  = static_cast<float>(b.bounds.h)
+                           / static_cast<float>(b.content_h);
+        const int thumb_h  = std::max(24, static_cast<int>(
+                               static_cast<float>(track_h) * ratio));
+        const int scroll_range = std::max(1, b.content_h - b.bounds.h);
+        const int thumb_y_off  = static_cast<int>(
+            static_cast<float>(track_h - thumb_h) *
+            static_cast<float>(b.scroll_y) /
+            static_cast<float>(scroll_range));
+        const Rect thumb{track_x, track_y + thumb_y_off, track_w, thumb_h};
+        // Catppuccin overlay0-ish, semi-transparent.
+        painter.fill_rounded_rect(thumb, 3.0f, Color{0x9c, 0xa0, 0xb0, 0xC0});
     }
 }
 
@@ -870,14 +930,50 @@ inline bool rect_contains(const Rect& r, int x, int y) noexcept {
         && y >= r.y && y < r.y + r.h;
 }
 
-// Deepest block whose border-box contains (x, y), or -1 if none.
-// Inputs are in DFS order — parents come before children — so the
-// *last* block in the list that contains the point is the deepest
-// match. One linear scan suffices.
-int hit_test_blocks(const std::vector<Block>& blocks, int x, int y) {
+// Sum of scroll offsets contributed by scrollable ancestors of
+// `idx`. Used by hit-test and paint to convert document-space block
+// bounds into the effective on-screen position.
+int scroll_offset_y_for(const std::vector<Block>& blocks,
+#if !defined(AFFINEUI_STUB_BUILD)
+                        const detail::StyleStore& styles,
+#endif
+                        int idx) {
+    int sum = 0;
+#if !defined(AFFINEUI_STUB_BUILD)
+    using O = detail::ComputedStyle::Overflow;
+    int p = (idx >= 0) ? blocks[static_cast<std::size_t>(idx)].parent_idx : -1;
+    while (p >= 0) {
+        const auto& pb = blocks[static_cast<std::size_t>(p)];
+        const auto ov = styles.computed(pb.id).overflow_y;
+        if ((ov == O::Scroll || ov == O::Auto) && pb.scroll_y != 0) {
+            sum += pb.scroll_y;
+        }
+        p = pb.parent_idx;
+    }
+#else
+    (void)blocks; (void)idx;
+#endif
+    return sum;
+}
+
+// Deepest block whose effective border-box (after applying any
+// ancestor scroll offsets) contains (x, y), or -1 if none. Walk in
+// DFS order — parents before children — so the *last* match wins.
+int hit_test_blocks(const std::vector<Block>& blocks,
+#if !defined(AFFINEUI_STUB_BUILD)
+                    const detail::StyleStore& styles,
+#endif
+                    int x, int y) {
     int hit = -1;
     for (std::size_t i = 0; i < blocks.size(); ++i) {
-        if (rect_contains(blocks[i].bounds, x, y)) {
+#if !defined(AFFINEUI_STUB_BUILD)
+        const int dy = scroll_offset_y_for(blocks, styles, static_cast<int>(i));
+#else
+        const int dy = 0;
+#endif
+        Rect eff = blocks[i].bounds;
+        eff.y -= dy;
+        if (rect_contains(eff, x, y)) {
             hit = static_cast<int>(i);
         }
     }
@@ -988,9 +1084,30 @@ bool refresh_active_chain(detail::DocumentImpl& impl) {
     return refresh_pseudo_chain(impl, impl.active_chain,
                                 impl.active_idx, kActiveStateBit);
 }
-#else  // stub build — no DOM, no pseudo bookkeeping
+
+// True iff this block accepts scroll input on its Y axis.
+bool block_is_scrollable_y(const detail::DocumentImpl& impl, int idx) {
+    if (idx < 0) return false;
+    const auto& b = impl.blocks[static_cast<std::size_t>(idx)];
+    const auto ov = impl.style_store.computed(b.id).overflow_y;
+    using O = detail::ComputedStyle::Overflow;
+    if (ov != O::Scroll && ov != O::Auto) return false;
+    return b.content_h > b.bounds.h;
+}
+
+// Find the nearest scrollable-Y ancestor (or self) of `idx`. Returns
+// -1 when none exists. Used by wheel routing.
+int find_scrollable_y_ancestor(const detail::DocumentImpl& impl, int idx) {
+    while (idx >= 0) {
+        if (block_is_scrollable_y(impl, idx)) return idx;
+        idx = impl.blocks[static_cast<std::size_t>(idx)].parent_idx;
+    }
+    return -1;
+}
+#else  // stub build — no DOM, no pseudo / scroll bookkeeping
 bool refresh_hover_chain(detail::DocumentImpl&)  { return false; }
 bool refresh_active_chain(detail::DocumentImpl&) { return false; }
+int  find_scrollable_y_ancestor(const detail::DocumentImpl&, int) { return -1; }
 #endif
 }  // namespace
 
@@ -999,7 +1116,7 @@ DispatchResult Document::dispatch(const Event& ev) {
     switch (ev.type) {
         case EventType::MouseMove: {
             impl_->last_mouse_pos = ev.pos;
-            const int new_hover = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
+            const int new_hover = hit_test_blocks(impl_->blocks, impl_->style_store, ev.pos.x, ev.pos.y);
             if (new_hover != impl_->hovered_idx) {
                 impl_->hovered_idx      = new_hover;
                 result.redraw_requested = true;
@@ -1015,7 +1132,7 @@ DispatchResult Document::dispatch(const Event& ev) {
         }
         case EventType::MouseDown: {
             impl_->last_mouse_pos = ev.pos;
-            impl_->hovered_idx    = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
+            impl_->hovered_idx    = hit_test_blocks(impl_->blocks, impl_->style_store, ev.pos.x, ev.pos.y);
             // :active follows the press: set to whatever's under the
             // pointer right now, refresh the active chain so the bit
             // toggles on and an immediate restyle visualizes the press.
@@ -1027,7 +1144,7 @@ DispatchResult Document::dispatch(const Event& ev) {
         }
         case EventType::MouseUp: {
             impl_->last_mouse_pos = ev.pos;
-            impl_->hovered_idx    = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
+            impl_->hovered_idx    = hit_test_blocks(impl_->blocks, impl_->style_store, ev.pos.x, ev.pos.y);
             // Clear :active on every MouseUp — the press is over. We
             // don't try to be clever about "release outside the
             // pressed element" today; that nuance is part of the
@@ -1038,6 +1155,31 @@ DispatchResult Document::dispatch(const Event& ev) {
             if (h || a) result.redraw_requested = true;
             break;
         }
+#if !defined(AFFINEUI_STUB_BUILD)
+        case EventType::MouseWheel: {
+            // Route to the nearest scrollable-Y ancestor of whatever
+            // the pointer is over. Convention: positive wheel_dy
+            // scrolls content up (i.e. scroll position increases).
+            // The platform adapter is responsible for normalizing
+            // direction + step size before we get here.
+            const int target = find_scrollable_y_ancestor(
+                *impl_, impl_->hovered_idx);
+            if (target < 0) break;
+            auto& sb = impl_->blocks[static_cast<std::size_t>(target)];
+            constexpr int kPxPerWheelStep = 24;
+            const int delta = static_cast<int>(
+                -ev.wheel_dy * kPxPerWheelStep);
+            const int max_scroll = std::max(0, sb.content_h - sb.bounds.h);
+            const int next       = std::clamp(sb.scroll_y + delta,
+                                              0, max_scroll);
+            if (next != sb.scroll_y) {
+                sb.scroll_y             = next;
+                impl_->paint_dirty      = true;
+                result.redraw_requested = true;
+            }
+            break;
+        }
+#endif
         default:
             break;
     }

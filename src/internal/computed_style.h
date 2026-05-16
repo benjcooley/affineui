@@ -85,7 +85,16 @@ struct ComputedStyle {
         NotAllowed, ResizeEW, ResizeNS,
     };
     Cursor cursor{Cursor::Default};
-    std::uint8_t pad_cursor_{0};
+
+    // CSS `overflow-y`. Determines whether children of this block can
+    // be scrolled when content exceeds the box. Visible is the CSS
+    // default (children paint outside the parent's bounds, no scroll).
+    // Auto + Scroll both make the block scrollable; we don't yet
+    // distinguish them visually (no scrollbar when not needed).
+    enum class Overflow : std::uint8_t {
+        Visible = 0, Hidden, Clip, Scroll, Auto,
+    };
+    Overflow      overflow_y{Overflow::Visible};
     std::uint16_t pad_cursor2_{0};
 
     // ── Flex container + item properties (12 bytes) ───────────────

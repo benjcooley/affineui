@@ -52,6 +52,14 @@ int main() {
             h1 { color: #f38ba8; font-size: 28px;
                  margin: 0 0 8px 0; }
             p  { color: #a6adc8; font-size: 16px; margin: 0; }
+
+            /* Scroll container. Fixed height + overflow-y: auto;
+               children that overflow can be wheel-scrolled. The
+               painter clips to .scroll's bounds and a thin thumb
+               appears on the right showing scroll position. */
+            .scroll { height: 200px; overflow-y: auto;
+                      padding: 8px 12px; }
+            .row    { padding: 8px 4px; }
         </style>
         <!-- cursor lives in the inline style because lexbor 2.4 has no
              `cursor` property; the cascade only sees it via the inline
@@ -66,6 +74,19 @@ int main() {
             <h1>Plain card</h1>
             <p>This one doesn't react. Hit-testing is bounds-based;
                handlers are matched by CSS selectors.</p>
+        </div>
+        <div class="card scroll" style="border-radius: 10px">
+            <p class="row">Row 1 — wheel to scroll. The card itself
+               is 200px tall but the content runs taller.</p>
+            <p class="row">Row 2 — content overflows.</p>
+            <p class="row">Row 3</p>
+            <p class="row">Row 4</p>
+            <p class="row">Row 5</p>
+            <p class="row">Row 6</p>
+            <p class="row">Row 7</p>
+            <p class="row">Row 8</p>
+            <p class="row">Row 9</p>
+            <p class="row">Row 10 — last row.</p>
         </div>
     )");
 

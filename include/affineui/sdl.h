@@ -91,6 +91,18 @@ inline Event translate(const SDL_Event& ev) {
             }
             return out;
         }
+        case SDL_MOUSEWHEEL: {
+            out.type     = EventType::MouseWheel;
+            out.wheel_dx = static_cast<float>(ev.wheel.x);
+            out.wheel_dy = static_cast<float>(ev.wheel.y);
+            // SDL_MOUSEWHEEL doesn't carry the cursor position; use
+            // the current mouse state so the wheel routes through the
+            // hover chain Document::dispatch tracks.
+            int mx = 0, my = 0;
+            SDL_GetMouseState(&mx, &my);
+            out.pos = Point{mx, my};
+            return out;
+        }
         case SDL_WINDOWEVENT:
             if (ev.window.event == SDL_WINDOWEVENT_LEAVE) {
                 out.type = EventType::MouseMove;

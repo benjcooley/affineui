@@ -64,9 +64,10 @@ inline Event translate(const sapp_event* ev) {
     Event out{};
     if (!ev) return out;
     switch (ev->type) {
-        case SAPP_EVENTTYPE_MOUSE_MOVE: out.type = EventType::MouseMove; break;
-        case SAPP_EVENTTYPE_MOUSE_DOWN: out.type = EventType::MouseDown; break;
-        case SAPP_EVENTTYPE_MOUSE_UP:   out.type = EventType::MouseUp;   break;
+        case SAPP_EVENTTYPE_MOUSE_MOVE:   out.type = EventType::MouseMove;  break;
+        case SAPP_EVENTTYPE_MOUSE_DOWN:   out.type = EventType::MouseDown;  break;
+        case SAPP_EVENTTYPE_MOUSE_UP:     out.type = EventType::MouseUp;    break;
+        case SAPP_EVENTTYPE_MOUSE_SCROLL: out.type = EventType::MouseWheel; break;
         case SAPP_EVENTTYPE_MOUSE_LEAVE:
             out.type = EventType::MouseMove;
             out.pos  = Point{-1, -1};
@@ -86,6 +87,10 @@ inline Event translate(const sapp_event* ev) {
             case SAPP_MOUSEBUTTON_MIDDLE: out.button = MouseButton::Middle; break;
             default: break;
         }
+    }
+    if (ev->type == SAPP_EVENTTYPE_MOUSE_SCROLL) {
+        out.wheel_dx = ev->scroll_x;
+        out.wheel_dy = ev->scroll_y;
     }
     return out;
 }
