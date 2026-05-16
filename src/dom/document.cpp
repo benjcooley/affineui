@@ -1231,9 +1231,15 @@ void Document::draw(Painter& painter) {
             const float content_w = static_cast<float>(
                 eff.w - cs.border_left - cs.border_right
                       - cs.padding_left - cs.padding_right);
+            // Add 1px slack to wrap width: measure rounds + draw word-
+            // break can disagree at the edge (text whose natural width
+            // exactly equals content_w sometimes wraps the last word
+            // onto a new line). The block was already sized to match
+            // the measure, so giving paint a single-pixel tolerance
+            // matches the design intent without overflowing.
             painter.draw_text_box(font, Point{text_x, text_y}, b.text,
                                   detail::unpack_rgba(an.color_rgba),
-                                  content_w);
+                                  content_w + 1.0f);
         }
 
         if (clipped) painter.pop_clip();

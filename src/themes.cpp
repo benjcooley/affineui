@@ -29,7 +29,7 @@ std::string_view ua_default() {
         "strong,b{font-weight:bold}"
         "em,i{font-style:italic}"
         "ul,ol{padding-left:40px;margin:1em 0}"
-        "button,input,select,textarea{font:inherit}"
+        "button,input,select,textarea{font:inherit;display:inline-block}"
         "code,pre,kbd,samp{font-family:monospace}";
     return kCss;
 }

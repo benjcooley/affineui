@@ -7,6 +7,7 @@
 #include "affineui/painter.h"
 #include "internal/paint_internal.h"
 
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -166,12 +167,19 @@ public:
         // nvgTextBoxBounds returns [xmin, ymin, xmax, ymax] for the
         // rendered text wrapped at `breakRowWidth`. The bounds are in
         // the same local coords as the (x,y) we passed (we pass 0,0).
+        //
+        // CEIL (not round-to-nearest) on the way out. Yoga sizes the
+        // box to whatever we report. At paint time we pass that same
+        // width as `breakRowWidth` to nvgTextBox; if measure rounded
+        // DOWN by .5, the paint-side wrap would see "actual > width
+        // by epsilon" and break the word onto a new line — invisible
+        // wrap on what was supposed to be a single-line box.
         float bounds[4] = {0, 0, 0, 0};
         nvgTextBoxBounds(vg_, 0.0f, 0.0f, max_width,
                          text.data(), text.data() + text.size(), bounds);
         return Size{
-            static_cast<int>(bounds[2] - bounds[0] + 0.5f),
-            static_cast<int>(bounds[3] - bounds[1] + 0.5f),
+            static_cast<int>(std::ceil(bounds[2] - bounds[0])),
+            static_cast<int>(std::ceil(bounds[3] - bounds[1])),
         };
     }
 

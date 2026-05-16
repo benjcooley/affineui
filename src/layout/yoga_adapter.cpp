@@ -102,6 +102,22 @@ void apply_style(YGNodeRef node, const ComputedStyle& cs,
         YGNodeStyleSetAlignItems   (node, YGAlignStretch);
     }
 
+    // inline / inline-block items don't stretch to fill their parent
+    // — they size to content. align-self: flex-start beats the
+    // parent's align-items: stretch on the cross axis, and
+    // flex-shrink: 0 keeps Yoga from compressing the child's
+    // preferred (single-line) measured width down when the parent's
+    // available room is generous. Without that override, the measure
+    // callback gets called twice and the second pass under
+    // AtMost(parent_w) wraps text that fit fine on its own. (A real
+    // inline formatting context — multiple inline siblings on one
+    // line — still needs a synthetic line-box wrapper.)
+    if (cs.display == ComputedStyle::Display::Inline ||
+        cs.display == ComputedStyle::Display::InlineBlock) {
+        YGNodeStyleSetAlignSelf  (node, YGAlignFlexStart);
+        YGNodeStyleSetFlexShrink (node, 0.0f);
+    }
+
     // ── Flex item properties ───────────────────────────────────────
     // These apply to the node when its *parent* is a flex container.
     // Yoga reads them only when relevant, so it's safe to push them
