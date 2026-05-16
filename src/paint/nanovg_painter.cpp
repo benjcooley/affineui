@@ -109,13 +109,25 @@ public:
 
     std::uint32_t resolve_font(std::string_view family,
                                int               size_px,
-                               int /*weight*/,
+                               int               weight,
                                bool /*italic*/) override {
         // NanoVG addresses fonts by face id + a per-frame size. We pack
         // (face_id, size) into a handle so draw_text/measure_text can
         // reconstitute it without another lookup.
+        //
+        // Weight selection: NanoVG has no "synthetic bold" — every
+        // weight is its own face. CSS weights >= 600 (semi-bold and
+        // above) pick a registered "<family>-bold" face if available;
+        // anything lighter falls through to the regular face.
         const std::string family_str(family);
-        int face = nvgFindFont(vg_, family_str.c_str());
+        const bool        prefer_bold = weight >= 600;
+
+        int face = -1;
+        if (prefer_bold) {
+            face = nvgFindFont(vg_, (family_str + "-bold").c_str());
+            if (face < 0 && bold_face_ >= 0) face = bold_face_;
+        }
+        if (face < 0) face = nvgFindFont(vg_, family_str.c_str());
         if (face < 0) face = default_face_;
         if (face < 0) return 0;
         const std::uint32_t handle = pack_handle(static_cast<std::uint16_t>(face),
@@ -236,6 +248,7 @@ public:
     void pop_clip() override { nvgRestore(vg_); }
 
     void set_default_face(int face) { default_face_ = face; }
+    void set_bold_face   (int face) { bold_face_    = face; }
 
 private:
     static constexpr std::uint32_t pack_handle(std::uint16_t face, std::uint16_t size) {
@@ -256,6 +269,7 @@ private:
     int                                          width_{0};
     int                                          height_{0};
     int                                          default_face_{-1};
+    int                                          bold_face_{-1};
     std::unordered_map<std::string, int>         image_cache_;
 };
 
@@ -270,6 +284,10 @@ std::unique_ptr<Painter> make_nanovg_painter(NVGcontext* vg) {
     int face = nvgFindFont(vg, "sans");
     if (face < 0) face = nvgFindFont(vg, "sans-serif");
     if (face >= 0) painter->set_default_face(face);
+    // Same for the bold variant, if register_default_font installed it.
+    int bold = nvgFindFont(vg, "sans-bold");
+    if (bold < 0) bold = nvgFindFont(vg, "sans-serif-bold");
+    if (bold >= 0) painter->set_bold_face(bold);
     return painter;
 }
 
@@ -299,13 +317,47 @@ std::string_view register_default_font(NVGcontext* vg) {
         "C:/Windows/Fonts/calibri.ttf",
 #endif
     };
+    static constexpr const char* kBoldCandidates[] = {
+#if defined(__APPLE__)
+        // Helvetica.ttc on macOS is a font collection — face index 1
+        // is typically the bold face. We currently rely on a separate
+        // bold TTF being available instead (more deterministic). If
+        // none are present the regular face is reused.
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/System/Library/Fonts/HelveticaNeueBd.ttc",
+        "/System/Library/Fonts/SFNSBold.ttf",
+        "/System/Library/Fonts/SFNS-Bold.ttf",
+#elif defined(__linux__)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+#elif defined(_WIN32)
+        "C:/Windows/Fonts/segoeuib.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/calibrib.ttf",
+#endif
+    };
+    std::string_view registered_regular;
     for (const char* path : kCandidates) {
         if (nvgCreateFont(vg, "sans", path) >= 0) {
             nvgCreateFont(vg, "sans-serif", path);
-            return "sans";
+            registered_regular = "sans";
+            break;
         }
     }
-    return {};
+    // Bold is best-effort. If no bold TTF is on the system, weight >=
+    // 600 falls back to the regular face (mildly worse than browser
+    // behavior, but no synthetic-bold path exists in NanoVG).
+    for (const char* path : kBoldCandidates) {
+        if (nvgCreateFont(vg, "sans-bold", path) >= 0) {
+            nvgCreateFont(vg, "sans-serif-bold", path);
+            break;
+        }
+    }
+    return registered_regular;
 }
 
 }  // namespace detail

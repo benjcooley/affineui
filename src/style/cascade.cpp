@@ -385,6 +385,26 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
                 s.computed.font_size_px = static_cast<std::uint16_t>(px);
             break;
         }
+        case LXB_CSS_PROPERTY_FONT_WEIGHT: {
+            const auto* v =
+                static_cast<const lxb_css_property_font_weight_t*>(d->u.user);
+            int w = 0;
+            switch (v->type) {
+                case LXB_CSS_FONT_WEIGHT__NUMBER:
+                    w = static_cast<int>(v->number.num + 0.5);
+                    break;
+                case LXB_CSS_FONT_WEIGHT_NORMAL:  w = 400; break;
+                case LXB_CSS_FONT_WEIGHT_BOLD:    w = 700; break;
+                case LXB_CSS_FONT_WEIGHT_BOLDER:  w = 700; break;  // approx
+                case LXB_CSS_FONT_WEIGHT_LIGHTER: w = 300; break;  // approx
+                default: break;
+            }
+            if (w > 0)
+                s.computed.font_weight =
+                    static_cast<std::uint16_t>(std::clamp(w, 1, 999));
+            s.computed.has.font_weight = 1;
+            break;
+        }
         case LXB_CSS_PROPERTY_WIDTH: {
             const auto* v =
                 static_cast<const lxb_css_property_width_t*>(d->u.user);
