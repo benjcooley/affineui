@@ -76,42 +76,64 @@ bool parse_hex_color(const lxb_css_value_color_t* v, std::uint32_t& out) {
 // Resolve a `<length>` value to integer CSS pixels. Phase 2A handles
 // LENGTH-typed values in `px`; em/rem/% follow when the font cascade
 // and percent-resolution context are wired in (Phase 2A.1).
+//
+// CSS lets you write a unit-less `0` for any length value
+// (`padding: 6px 0` is valid; the `0` parses as a NUMBER, not a
+// LENGTH, but the spec treats it as zero pixels). Without this
+// fallback, padding shorthands like `padding: 6px 0` silently lose
+// the right/left sides and the mirror logic treats them as "unset"
+// — copying the top value into all four sides. Visible bug: items
+// got 6px of horizontal padding they didn't ask for.
 bool parse_length_px(const lxb_css_value_length_percentage_type_t* v, int& out) {
     if (!v) return false;
     if (v->length.type == LXB_CSS_VALUE__LENGTH) {
         const auto& L = v->length.u.length;
-        // LXB_CSS_UNIT_PX is declared in lxb_css_unit_absolute_t but
-        // L.unit is lxb_css_unit_t (the parent union enum); compare
-        // through the integer value to keep the compiler happy.
         if (static_cast<int>(L.unit) == static_cast<int>(LXB_CSS_UNIT_PX)) {
             out = static_cast<int>(L.num + 0.5);
             return true;
         }
+        return false;
+    }
+    if (v->length.type == LXB_CSS_VALUE__NUMBER) {
+        out = 0;  // unit-less zero is the only valid NUMBER here
+        return true;
     }
     return false;
 }
 
-// Sibling overload for properties that take a *plain* length (no
-// percentage variant) — e.g. `border-width`. The structure is
-// `{ type, length }` rather than `{ length: { type, u } }`.
 bool parse_length_px(const lxb_css_value_length_type_t* v, int& out) {
     if (!v) return false;
-    if (v->type != LXB_CSS_VALUE__LENGTH) return false;
-    if (static_cast<int>(v->length.unit) != static_cast<int>(LXB_CSS_UNIT_PX)) return false;
-    out = static_cast<int>(v->length.num + 0.5);
-    return true;
+    if (v->type == LXB_CSS_VALUE__LENGTH) {
+        if (static_cast<int>(v->length.unit) != static_cast<int>(LXB_CSS_UNIT_PX)) return false;
+        out = static_cast<int>(v->length.num + 0.5);
+        return true;
+    }
+    if (v->type == LXB_CSS_VALUE__NUMBER) {
+        // The lxb_css_value_length_type_t union doesn't expose the
+        // number field directly here — but a NUMBER-typed length is
+        // always the unit-less zero shorthand per CSS spec. Treat
+        // as 0.
+        out = 0;
+        return true;
+    }
+    return false;
 }
 
-// Sibling overload for the *direct* length-percentage type — used by
-// padding/margin per-side values. Layout differs from the wrapped
-// `_type_` variant: type and union are on the same struct, no extra
-// nesting.
 bool parse_length_px(const lxb_css_value_length_percentage_t* v, int& out) {
     if (!v) return false;
-    if (v->type != LXB_CSS_VALUE__LENGTH) return false;  // % handled later
-    if (static_cast<int>(v->u.length.unit) != static_cast<int>(LXB_CSS_UNIT_PX)) return false;
-    out = static_cast<int>(v->u.length.num + 0.5);
-    return true;
+    if (v->type == LXB_CSS_VALUE__LENGTH) {
+        if (static_cast<int>(v->u.length.unit) != static_cast<int>(LXB_CSS_UNIT_PX)) return false;
+        out = static_cast<int>(v->u.length.num + 0.5);
+        return true;
+    }
+    if (v->type == LXB_CSS_VALUE__NUMBER) {
+        // Unit-less zero — lexbor reuses the length field's num for
+        // the numeric value. CSS spec only allows unit-less zero for
+        // length values; treat any value here as the zero-shorthand.
+        out = 0;
+        return true;
+    }
+    return false;
 }
 
 // Route one declaration into the right struct.
