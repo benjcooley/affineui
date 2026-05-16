@@ -1,0 +1,60 @@
+# Build
+build/
+build-*/
+out/
+cmake-build-*/
+_deps/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+CMakeScripts/
+*.cmake.user
+install_manifest.txt
+
+# Object / library outputs
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.gch
+*.pch
+
+# IDE / editor
+.vscode/
+.idea/
+.vs/
+*.xcodeproj/
+*.xcworkspace/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*~
+
+# Test / coverage
+Testing/
+*.gcno
+*.gcda
+*.profraw
+*.profdata
+coverage/
+
+# Vendored deps: fetched into external/ via scripts/fetch_deps.sh at the
+# pinned refs listed in external/README.md. Nothing under external/ is
+# committed; only the README explaining the convention is tracked.
+external/*
+!external/README.md
+
+# Local
+.cache/
+compile_commands.json
+.envrc
