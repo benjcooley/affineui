@@ -1304,7 +1304,8 @@ void Document::draw(Painter& painter) {
             // matches the design intent without overflowing.
             painter.draw_text_box(font, Point{text_x, text_y}, b.text,
                                   detail::unpack_rgba(an.color_rgba),
-                                  content_w + 1.0f);
+                                  content_w + 1.0f,
+                                  detail::effective_line_height_mult(cs));
         }
 
         if (clipped) painter.pop_clip();

@@ -36,8 +36,8 @@ public:
     int           measure_text(std::uint32_t, std::string_view) override { return 0; }
     TextMetrics   text_metrics(std::uint32_t) override { return {}; }
     void draw_text(std::uint32_t, const Point&, std::string_view, Color) override {}
-    Size measure_text_box(std::uint32_t, std::string_view, float) override { return {}; }
-    void draw_text_box(std::uint32_t, const Point&, std::string_view, Color, float) override {}
+    Size measure_text_box(std::uint32_t, std::string_view, float, float) override { return {}; }
+    void draw_text_box(std::uint32_t, const Point&, std::string_view, Color, float, float) override {}
     std::uint32_t load_image(std::string_view) override { return 0; }
     Size          image_size(std::uint32_t) override { return {}; }
     void draw_image(std::uint32_t, const Rect&, const Rect&) override {}
@@ -197,9 +197,11 @@ public:
 
     Size measure_text_box(std::uint32_t handle,
                           std::string_view text,
-                          float max_width) override {
+                          float max_width,
+                          float line_height_mult) override {
         if (handle == 0 || text.empty()) return {};
         apply_handle(handle);
+        nvgTextLineHeight(vg_, line_height_mult);
         // nvgTextBoxBounds returns [xmin, ymin, xmax, ymax] for the
         // rendered text wrapped at `breakRowWidth`. The bounds are in
         // the same local coords as the (x,y) we passed (we pass 0,0).
@@ -223,9 +225,11 @@ public:
                        const Point&  pos,
                        std::string_view text,
                        Color         color,
-                       float         max_width) override {
+                       float         max_width,
+                       float         line_height_mult) override {
         if (handle == 0 || text.empty()) return;
         apply_handle(handle);
+        nvgTextLineHeight(vg_, line_height_mult);
         nvgFillColor(vg_, to_nvg(color));
         const float fx = static_cast<float>(pos.x);
         const float fy = static_cast<float>(pos.y);

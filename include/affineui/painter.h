@@ -62,18 +62,24 @@ public:
     /// Measure the rendered bounding box of `text` when wrapped to a
     /// row width of `max_width` px. Returns the actual rendered width
     /// (≤ max_width) and the total height (potentially many lines).
-    /// Used by the layout pass to size text leaves before paint runs.
-    virtual Size measure_text_box(std::uint32_t  font,
+    /// `line_height_mult` is the inter-line spacing multiplier (1.0 =
+    /// font's natural spacing, 1.5 = "line-height: 1.5"). Used by the
+    /// layout pass to size text leaves before paint runs.
+    virtual Size measure_text_box(std::uint32_t   font,
                                   std::string_view text,
-                                  float          max_width) = 0;
+                                  float           max_width,
+                                  float           line_height_mult = 1.0f) = 0;
 
     /// Render `text` wrapped to `max_width`. Position is the top-left
-    /// of the wrapped text block.
-    virtual void draw_text_box(std::uint32_t  font,
-                               const Point&   pos,
+    /// of the wrapped text block. `line_height_mult` must match the
+    /// value passed to measure_text_box for the layout's height to
+    /// agree with what's actually drawn.
+    virtual void draw_text_box(std::uint32_t   font,
+                               const Point&    pos,
                                std::string_view text,
-                               Color          color,
-                               float          max_width) = 0;
+                               Color           color,
+                               float           max_width,
+                               float           line_height_mult = 1.0f) = 0;
 
     // ── Images ──────────────────────────────────────────────────────
     /// Returns an opaque image handle. Zero on miss.

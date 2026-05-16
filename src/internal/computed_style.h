@@ -166,4 +166,18 @@ static_assert(sizeof(ComputedStyle) <= 80,
 static_assert(std::is_trivially_copyable_v<ComputedStyle>,
               "ComputedStyle must be trivially copyable");
 
+/// Translate `ComputedStyle.line_height_x100` into a multiplier
+/// suitable for `Painter::draw_text_box` / `measure_text_box`. The
+/// stored value is signed: positive = multiplier × 100, negative =
+/// absolute pixels (negated). Layout + paint both call this so the
+/// wrap pass and the actual draw agree on inter-line spacing.
+inline float effective_line_height_mult(const ComputedStyle& cs) {
+    if (cs.line_height_x100 > 0)
+        return static_cast<float>(cs.line_height_x100) / 100.0f;
+    if (cs.line_height_x100 < 0 && cs.font_size_px > 0)
+        return static_cast<float>(-cs.line_height_x100)
+             / static_cast<float>(cs.font_size_px);
+    return 1.0f;  // unset → NVG default
+}
+
 }  // namespace affineui::detail

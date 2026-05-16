@@ -177,6 +177,7 @@ struct MeasureCtx {
     const char*   text_data;
     std::size_t   text_size;
     std::uint32_t font;
+    float         line_height_mult;
 };
 
 YGSize measure_text_cb(YGNodeConstRef node,
@@ -191,7 +192,8 @@ YGSize measure_text_cb(YGNodeConstRef node,
     const auto sz = ctx->painter->measure_text_box(
         ctx->font,
         std::string_view(ctx->text_data, ctx->text_size),
-        wrap_w);
+        wrap_w,
+        ctx->line_height_mult);
     return YGSize{
         static_cast<float>(sz.width),
         static_cast<float>(sz.height),
@@ -239,6 +241,7 @@ void layout_blocks_with_yoga(int viewport_width_px,
                 inputs[i].text.data(),
                 inputs[i].text.size(),
                 inputs[i].font,
+                inputs[i].style ? effective_line_height_mult(*inputs[i].style) : 1.0f,
             };
             YGNodeSetContext(n, &measure_ctxs[i]);
             YGNodeSetMeasureFunc(n, measure_text_cb);

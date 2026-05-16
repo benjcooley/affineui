@@ -76,6 +76,8 @@ struct PaintOp {
 
         // Same shape as draw_text plus a wrap-width. NanoVG's
         // nvgTextBox replays this at rasterize time.
+        // line_height_x100 stores the line-height multiplier × 100
+        // (so 1.5 lands as 150; 0 means "use 100"/1.0).
         struct {
             std::uint32_t font_handle;
             std::int16_t  x, y;
@@ -83,6 +85,8 @@ struct PaintOp {
             std::uint32_t text_offset;
             std::uint16_t text_len;
             std::uint16_t max_width;
+            std::uint16_t line_height_x100;
+            std::uint16_t pad0_;
         } draw_text_box;
 
         struct {
