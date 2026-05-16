@@ -1,0 +1,70 @@
+#pragma once
+
+// Yoga layout adapter. The single seam between the engine's
+// ComputedStyle world and Yoga's YGNode world.
+//
+// Why this exists as its own module:
+//   • Layout is the highest-risk subsystem (cf. docs/DESIGN.md §
+//     Correctness discipline). Containing every Yoga touchpoint to
+//     one file keeps the blast radius small and the failure modes
+//     isolated.
+//   • Yoga's quirks vs CSS (defaults, margin non-collapse, abs
+//     positioning) are encoded here once, documented inline, and
+//     never leak past this boundary.
+//   • Tests can target this adapter directly — feed in styles, read
+//     out bounds, no GL or NanoVG required.
+//
+// Interface contract:
+//   Input  : viewport width in px + a span of "block descriptors"
+//            (computed style + intrinsic content size).
+//   Output : a parallel span of bounds (x, y, w, h in px relative to
+//            the viewport origin).
+//   Side effects: none. All Yoga nodes allocated here are freed before
+//   return. The adapter is stateless across calls.
+
+#include "affineui/painter.h"
+#include "affineui/types.h"
+#include "internal/computed_style.h"
+
+#include <cstdint>
+#include <span>
+#include <string_view>
+
+namespace affineui {
+class Painter;
+}
+
+namespace affineui::detail {
+
+/// One block's worth of input to the layout pass.
+struct BlockLayoutInput {
+    const ComputedStyle* style;          // not owned, must outlive the call
+    int                  intrinsic_w_px; // (unused; reserved for future)
+    int                  intrinsic_h_px; // explicit height; ignored when `text` is set
+    /// Index into the same `inputs` span of this block's parent block,
+    /// or -1 for a top-level block (child of the synthetic root). Inputs
+    /// MUST be in DFS order so every child's `parent_idx` is less than
+    /// its own index — the adapter relies on this for the parent-
+    /// relative → document-relative coordinate accumulation.
+    int                  parent_idx{-1};
+
+    /// When non-empty AND `font` is non-zero AND a `measurer` is
+    /// supplied, the adapter installs a Yoga measure callback on this
+    /// node. Yoga then asks the callback for the actual rendered
+    /// width × height at the cross-axis constraint width — so text
+    /// wraps at the container width with real glyph metrics. When
+    /// either is missing, `intrinsic_h_px` is used as a fixed height.
+    std::string_view     text{};
+    std::uint32_t        font{0};
+};
+
+/// Run layout. `measurer` is consulted via Yoga's measure callbacks
+/// for any text-bearing leaves — pass the live painter so text wraps
+/// against real font metrics. nullptr is OK (text leaves fall back to
+/// their `intrinsic_h_px`).
+void layout_blocks_with_yoga(int viewport_width_px,
+                             std::span<const BlockLayoutInput> inputs,
+                             std::span<Rect> out_bounds,
+                             Painter* measurer = nullptr);
+
+}  // namespace affineui::detail
