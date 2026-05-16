@@ -1117,7 +1117,12 @@ void collect_blocks(detail::DocumentImpl& impl,
                 synth_cs.display        = Display::Flex;
                 synth_cs.flex_direction = detail::ComputedStyle::FlexDirection::Row;
                 synth_cs.flex_wrap      = detail::ComputedStyle::FlexWrap::Wrap;
-                synth_cs.align_items    = detail::ComputedStyle::AlignItems::Center;
+                // Inline formatting context aligns siblings at the
+                // text baseline (browser default), not the box vertical
+                // center — so a tall padded button and a plain span of
+                // text share the same baseline rather than the button
+                // floating above the text.
+                synth_cs.align_items    = detail::ComputedStyle::AlignItems::Baseline;
                 Block synth;
                 synth.id         = sid;
                 synth.parent_idx = parent_idx;
