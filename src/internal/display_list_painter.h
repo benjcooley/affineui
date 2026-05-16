@@ -1,0 +1,271 @@
+#pragma once
+
+#include "affineui/painter.h"
+#include "internal/display_list.h"
+
+namespace affineui::detail {
+
+/// A Painter that records all calls into a DisplayList instead of
+/// emitting GL draw commands. The Document calls this just like any
+/// other Painter — it has no idea it's being captured.
+///
+/// Frame lifecycle:
+///   begin_frame() — clears the previous DL.
+///   <paint calls>  — append PaintOps.
+///   end_frame()    — finalizes the content hash.
+///
+/// After end_frame() the DL is read-only until the next begin_frame.
+/// `take()` moves it out; usually we keep a stable instance and let
+/// the next begin_frame() reset it in place (cheaper, reuses vector
+/// capacity).
+///
+/// What this painter does NOT do:
+///   - Anti-aliasing (text/path rendering still happens at replay
+///     time through NanoVG).
+///   - Font loading. `resolve_font` returns a stable opaque handle
+///     that the replay-side painter resolves to a real face. We
+///     forward to the wrapped font-resolver painter so resolve_font
+///     / measure_text / image_size hit the actual NanoVG context.
+class DisplayListBuilder final : public Painter {
+public:
+    /// `font_resolver` is a real Painter whose `resolve_font`,
+    /// `measure_text`, `load_image`, and `image_size` are forwarded.
+    /// Builder doesn't itself touch GL — but `Document::draw` legitimately
+    /// asks for font handles and text widths, so we still need those
+    /// to resolve through a live NanoVG context.
+    explicit DisplayListBuilder(Painter* font_resolver)
+        : font_resolver_(font_resolver) {}
+
+    DisplayList& list()             { return list_; }
+    const DisplayList& list() const { return list_; }
+
+    // ── Frame lifecycle ────────────────────────────────────────────
+    void begin_frame(int /*w*/, int /*h*/, float /*dpi*/) override {
+        list_.clear();
+    }
+    void end_frame() override {
+        list_.finalize_hash();
+    }
+
+    // ── Recording calls ────────────────────────────────────────────
+    void fill_rect(const Rect& r, Color c) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::FillRect;
+        op.p.fill_rect.x = static_cast<std::int16_t>(r.x);
+        op.p.fill_rect.y = static_cast<std::int16_t>(r.y);
+        op.p.fill_rect.w = static_cast<std::int16_t>(r.w);
+        op.p.fill_rect.h = static_cast<std::int16_t>(r.h);
+        op.p.fill_rect.rgba = pack(c);
+        list_.ops.push_back(op);
+    }
+
+    void stroke_rect(const Rect& r, Color c, float thickness) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::StrokeRect;
+        op.p.stroke_rect.x = static_cast<std::int16_t>(r.x);
+        op.p.stroke_rect.y = static_cast<std::int16_t>(r.y);
+        op.p.stroke_rect.w = static_cast<std::int16_t>(r.w);
+        op.p.stroke_rect.h = static_cast<std::int16_t>(r.h);
+        op.p.stroke_rect.rgba = pack(c);
+        op.p.stroke_rect.thickness = thickness;
+        list_.ops.push_back(op);
+    }
+
+    void fill_rounded_rect(const Rect& r, float radius, Color c) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::FillRoundedRect;
+        op.p.fill_rounded.x = static_cast<std::int16_t>(r.x);
+        op.p.fill_rounded.y = static_cast<std::int16_t>(r.y);
+        op.p.fill_rounded.w = static_cast<std::int16_t>(r.w);
+        op.p.fill_rounded.h = static_cast<std::int16_t>(r.h);
+        op.p.fill_rounded.rgba = pack(c);
+        op.p.fill_rounded.radius = radius;
+        list_.ops.push_back(op);
+    }
+
+    void stroke_rounded_rect(const Rect& r, float radius, Color c, float thickness) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::StrokeRoundedRect;
+        op.p.stroke_rounded.x = static_cast<std::int16_t>(r.x);
+        op.p.stroke_rounded.y = static_cast<std::int16_t>(r.y);
+        op.p.stroke_rounded.w = static_cast<std::int16_t>(r.w);
+        op.p.stroke_rounded.h = static_cast<std::int16_t>(r.h);
+        op.p.stroke_rounded.rgba = pack(c);
+        op.p.stroke_rounded.radius = radius;
+        op.p.stroke_rounded.thickness = thickness;
+        list_.ops.push_back(op);
+    }
+
+    std::uint32_t resolve_font(std::string_view family, int size_px,
+                               int weight, bool italic) override {
+        return font_resolver_
+                 ? font_resolver_->resolve_font(family, size_px, weight, italic)
+                 : 0u;
+    }
+
+    int measure_text(std::uint32_t font, std::string_view text) override {
+        return font_resolver_ ? font_resolver_->measure_text(font, text) : 0;
+    }
+
+    TextMetrics text_metrics(std::uint32_t font) override {
+        return font_resolver_ ? font_resolver_->text_metrics(font) : TextMetrics{};
+    }
+
+    void draw_text(std::uint32_t font, const Point& pos,
+                   std::string_view text, Color c) override {
+        const auto [off, len] = list_.intern_text(text);
+        PaintOp op{};
+        op.kind = PaintOpKind::DrawText;
+        op.p.draw_text.font_handle = font;
+        op.p.draw_text.x = static_cast<std::int16_t>(pos.x);
+        op.p.draw_text.y = static_cast<std::int16_t>(pos.y);
+        op.p.draw_text.rgba = pack(c);
+        op.p.draw_text.text_offset = off;
+        op.p.draw_text.text_len    = len;
+        list_.ops.push_back(op);
+    }
+
+    Size measure_text_box(std::uint32_t font, std::string_view text, float max_w) override {
+        return font_resolver_
+                 ? font_resolver_->measure_text_box(font, text, max_w)
+                 : Size{};
+    }
+
+    void draw_text_box(std::uint32_t font, const Point& pos,
+                       std::string_view text, Color c, float max_w) override {
+        const auto [off, len] = list_.intern_text(text);
+        PaintOp op{};
+        op.kind = PaintOpKind::DrawTextBox;
+        op.p.draw_text_box.font_handle = font;
+        op.p.draw_text_box.x = static_cast<std::int16_t>(pos.x);
+        op.p.draw_text_box.y = static_cast<std::int16_t>(pos.y);
+        op.p.draw_text_box.rgba = pack(c);
+        op.p.draw_text_box.text_offset = off;
+        op.p.draw_text_box.text_len    = len;
+        // Cap at u16; document content widths > 65535 don't happen.
+        op.p.draw_text_box.max_width =
+            static_cast<std::uint16_t>(max_w > 65535.f ? 65535 : (max_w < 0.f ? 0 : max_w));
+        list_.ops.push_back(op);
+    }
+
+    std::uint32_t load_image(std::string_view url) override {
+        return font_resolver_ ? font_resolver_->load_image(url) : 0u;
+    }
+    Size image_size(std::uint32_t image) override {
+        return font_resolver_ ? font_resolver_->image_size(image) : Size{};
+    }
+    void draw_image(std::uint32_t image, const Rect& dst, const Rect& src) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::DrawImage;
+        op.p.draw_image.image_handle = image;
+        op.p.draw_image.x  = static_cast<std::int16_t>(dst.x);
+        op.p.draw_image.y  = static_cast<std::int16_t>(dst.y);
+        op.p.draw_image.w  = static_cast<std::int16_t>(dst.w);
+        op.p.draw_image.h  = static_cast<std::int16_t>(dst.h);
+        op.p.draw_image.sx = static_cast<std::int16_t>(src.x);
+        op.p.draw_image.sy = static_cast<std::int16_t>(src.y);
+        op.p.draw_image.sw = static_cast<std::int16_t>(src.w);
+        op.p.draw_image.sh = static_cast<std::int16_t>(src.h);
+        list_.ops.push_back(op);
+    }
+
+    void push_clip(const Rect& r) override {
+        PaintOp op{};
+        op.kind = PaintOpKind::PushClip;
+        op.p.clip.x = static_cast<std::int16_t>(r.x);
+        op.p.clip.y = static_cast<std::int16_t>(r.y);
+        op.p.clip.w = static_cast<std::int16_t>(r.w);
+        op.p.clip.h = static_cast<std::int16_t>(r.h);
+        list_.ops.push_back(op);
+    }
+    void pop_clip() override {
+        PaintOp op{};
+        op.kind = PaintOpKind::PopClip;
+        list_.ops.push_back(op);
+    }
+
+private:
+    static std::uint32_t pack(Color c) {
+        return (std::uint32_t(c.r) << 24)
+             | (std::uint32_t(c.g) << 16)
+             | (std::uint32_t(c.b) <<  8)
+             |  std::uint32_t(c.a);
+    }
+
+    Painter*    font_resolver_;
+    DisplayList list_;
+};
+
+/// Replay a recorded DisplayList through a Painter. Used at rasterize
+/// time to actually emit nvg* calls. begin_frame / end_frame on the
+/// target Painter are the caller's responsibility — replay() only
+/// emits content ops.
+inline void replay(const DisplayList& list, Painter& target) {
+    static const auto unpack = [](std::uint32_t v) {
+        return Color{
+            static_cast<std::uint8_t>((v >> 24) & 0xFF),
+            static_cast<std::uint8_t>((v >> 16) & 0xFF),
+            static_cast<std::uint8_t>((v >>  8) & 0xFF),
+            static_cast<std::uint8_t>( v        & 0xFF),
+        };
+    };
+    for (const auto& op : list.ops) {
+        switch (op.kind) {
+            case PaintOpKind::FillRect: {
+                const auto& r = op.p.fill_rect;
+                target.fill_rect(Rect{r.x, r.y, r.w, r.h}, unpack(r.rgba));
+                break;
+            }
+            case PaintOpKind::StrokeRect: {
+                const auto& r = op.p.stroke_rect;
+                target.stroke_rect(Rect{r.x, r.y, r.w, r.h},
+                                   unpack(r.rgba), r.thickness);
+                break;
+            }
+            case PaintOpKind::FillRoundedRect: {
+                const auto& r = op.p.fill_rounded;
+                target.fill_rounded_rect(Rect{r.x, r.y, r.w, r.h},
+                                         r.radius, unpack(r.rgba));
+                break;
+            }
+            case PaintOpKind::StrokeRoundedRect: {
+                const auto& r = op.p.stroke_rounded;
+                target.stroke_rounded_rect(Rect{r.x, r.y, r.w, r.h},
+                                           r.radius, unpack(r.rgba), r.thickness);
+                break;
+            }
+            case PaintOpKind::DrawText: {
+                const auto& t = op.p.draw_text;
+                target.draw_text(t.font_handle, Point{t.x, t.y},
+                                 list.text_at(t.text_offset, t.text_len),
+                                 unpack(t.rgba));
+                break;
+            }
+            case PaintOpKind::DrawTextBox: {
+                const auto& t = op.p.draw_text_box;
+                target.draw_text_box(t.font_handle, Point{t.x, t.y},
+                                     list.text_at(t.text_offset, t.text_len),
+                                     unpack(t.rgba),
+                                     static_cast<float>(t.max_width));
+                break;
+            }
+            case PaintOpKind::DrawImage: {
+                const auto& i = op.p.draw_image;
+                target.draw_image(i.image_handle,
+                                  Rect{i.x, i.y, i.w, i.h},
+                                  Rect{i.sx, i.sy, i.sw, i.sh});
+                break;
+            }
+            case PaintOpKind::PushClip: {
+                const auto& c = op.p.clip;
+                target.push_clip(Rect{c.x, c.y, c.w, c.h});
+                break;
+            }
+            case PaintOpKind::PopClip:
+                target.pop_clip();
+                break;
+        }
+    }
+}
+
+}  // namespace affineui::detail

@@ -1,0 +1,307 @@
+// Concrete Painter that draws via NanoVG.
+//
+// Lowers each affineui::Painter method onto nvg* calls. NanoVG handles
+// the GL3 backend, the glyph atlas (via bundled fontstash), and
+// stb_image-backed image loading.
+
+#include "affineui/painter.h"
+#include "internal/paint_internal.h"
+
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#if !defined(AFFINEUI_STUB_BUILD)
+#    include "nanovg.h"
+#endif
+
+namespace affineui {
+
+#if defined(AFFINEUI_STUB_BUILD)
+
+// Stub Painter that satisfies the interface so other code links when
+// no deps have been fetched yet.
+class NullPainter final : public Painter {
+public:
+    void begin_frame(int, int, float) override {}
+    void end_frame() override {}
+    void fill_rect(const Rect&, Color) override {}
+    void stroke_rect(const Rect&, Color, float) override {}
+    void fill_rounded_rect(const Rect&, float, Color) override {}
+    void stroke_rounded_rect(const Rect&, float, Color, float) override {}
+    std::uint32_t resolve_font(std::string_view, int, int, bool) override { return 0; }
+    int           measure_text(std::uint32_t, std::string_view) override { return 0; }
+    TextMetrics   text_metrics(std::uint32_t) override { return {}; }
+    void draw_text(std::uint32_t, const Point&, std::string_view, Color) override {}
+    Size measure_text_box(std::uint32_t, std::string_view, float) override { return {}; }
+    void draw_text_box(std::uint32_t, const Point&, std::string_view, Color, float) override {}
+    std::uint32_t load_image(std::string_view) override { return 0; }
+    Size          image_size(std::uint32_t) override { return {}; }
+    void draw_image(std::uint32_t, const Rect&, const Rect&) override {}
+    void push_clip(const Rect&) override {}
+    void pop_clip() override {}
+};
+
+namespace detail {
+std::unique_ptr<Painter> make_nanovg_painter(NVGcontext*) {
+    return std::make_unique<NullPainter>();
+}
+std::uint32_t register_font_file(NVGcontext*, const char*, const char*) { return 0; }
+std::string_view register_default_font(NVGcontext*) { return {}; }
+}  // namespace detail
+
+#else  // !AFFINEUI_STUB_BUILD
+
+namespace {
+
+inline NVGcolor to_nvg(Color c) {
+    return nvgRGBA(c.r, c.g, c.b, c.a);
+}
+
+class NanoVGPainter final : public Painter {
+public:
+    explicit NanoVGPainter(NVGcontext* vg) : vg_(vg) {}
+
+    void begin_frame(int width, int height, float dpi_scale) override {
+        width_  = width;
+        height_ = height;
+        nvgBeginFrame(vg_, static_cast<float>(width), static_cast<float>(height), dpi_scale);
+    }
+
+    void end_frame() override { nvgEndFrame(vg_); }
+
+    void fill_rect(const Rect& r, Color c) override {
+        nvgBeginPath(vg_);
+        nvgRect(vg_, static_cast<float>(r.x), static_cast<float>(r.y),
+                static_cast<float>(r.w), static_cast<float>(r.h));
+        nvgFillColor(vg_, to_nvg(c));
+        nvgFill(vg_);
+    }
+
+    void stroke_rect(const Rect& r, Color c, float thickness) override {
+        nvgBeginPath(vg_);
+        nvgRect(vg_, static_cast<float>(r.x), static_cast<float>(r.y),
+                static_cast<float>(r.w), static_cast<float>(r.h));
+        nvgStrokeColor(vg_, to_nvg(c));
+        nvgStrokeWidth(vg_, thickness);
+        nvgStroke(vg_);
+    }
+
+    void fill_rounded_rect(const Rect& r, float radius, Color c) override {
+        nvgBeginPath(vg_);
+        nvgRoundedRect(vg_, static_cast<float>(r.x), static_cast<float>(r.y),
+                       static_cast<float>(r.w), static_cast<float>(r.h), radius);
+        nvgFillColor(vg_, to_nvg(c));
+        nvgFill(vg_);
+    }
+
+    void stroke_rounded_rect(const Rect& r, float radius, Color c, float w) override {
+        nvgBeginPath(vg_);
+        nvgRoundedRect(vg_, static_cast<float>(r.x), static_cast<float>(r.y),
+                       static_cast<float>(r.w), static_cast<float>(r.h), radius);
+        nvgStrokeColor(vg_, to_nvg(c));
+        nvgStrokeWidth(vg_, w);
+        nvgStroke(vg_);
+    }
+
+    std::uint32_t resolve_font(std::string_view family,
+                               int               size_px,
+                               int /*weight*/,
+                               bool /*italic*/) override {
+        // NanoVG addresses fonts by face id + a per-frame size. We pack
+        // (face_id, size) into a handle so draw_text/measure_text can
+        // reconstitute it without another lookup.
+        const std::string family_str(family);
+        int face = nvgFindFont(vg_, family_str.c_str());
+        if (face < 0) face = default_face_;
+        if (face < 0) return 0;
+        const std::uint32_t handle = pack_handle(static_cast<std::uint16_t>(face),
+                                                 static_cast<std::uint16_t>(size_px));
+        return handle;
+    }
+
+    int measure_text(std::uint32_t handle, std::string_view text) override {
+        if (handle == 0) return 0;
+        apply_handle(handle);
+        float bounds[4] = {0, 0, 0, 0};
+        const float advance = nvgTextBounds(vg_, 0.0f, 0.0f,
+                                            text.data(), text.data() + text.size(),
+                                            bounds);
+        return static_cast<int>(advance + 0.5f);
+    }
+
+    TextMetrics text_metrics(std::uint32_t handle) override {
+        TextMetrics m{};
+        if (handle == 0) return m;
+        apply_handle(handle);
+        // NanoVG returns descender as a *negative* value (pixels below
+        // baseline). We expose it as positive — the spec contract for
+        // TextMetrics is "magnitude in pixels."
+        float asc = 0, desc = 0, lh = 0;
+        nvgTextMetrics(vg_, &asc, &desc, &lh);
+        m.ascender    = asc;
+        m.descender   = desc < 0 ? -desc : desc;
+        m.line_height = lh;
+        return m;
+    }
+
+    void draw_text(std::uint32_t   handle,
+                   const Point&    pos,
+                   std::string_view text,
+                   Color           color) override {
+        if (handle == 0) return;
+        apply_handle(handle);
+        nvgFillColor(vg_, to_nvg(color));
+        nvgText(vg_, static_cast<float>(pos.x), static_cast<float>(pos.y),
+                text.data(), text.data() + text.size());
+    }
+
+    Size measure_text_box(std::uint32_t handle,
+                          std::string_view text,
+                          float max_width) override {
+        if (handle == 0 || text.empty()) return {};
+        apply_handle(handle);
+        // nvgTextBoxBounds returns [xmin, ymin, xmax, ymax] for the
+        // rendered text wrapped at `breakRowWidth`. The bounds are in
+        // the same local coords as the (x,y) we passed (we pass 0,0).
+        float bounds[4] = {0, 0, 0, 0};
+        nvgTextBoxBounds(vg_, 0.0f, 0.0f, max_width,
+                         text.data(), text.data() + text.size(), bounds);
+        return Size{
+            static_cast<int>(bounds[2] - bounds[0] + 0.5f),
+            static_cast<int>(bounds[3] - bounds[1] + 0.5f),
+        };
+    }
+
+    void draw_text_box(std::uint32_t handle,
+                       const Point&  pos,
+                       std::string_view text,
+                       Color         color,
+                       float         max_width) override {
+        if (handle == 0 || text.empty()) return;
+        apply_handle(handle);
+        nvgFillColor(vg_, to_nvg(color));
+        nvgTextBox(vg_,
+                   static_cast<float>(pos.x), static_cast<float>(pos.y),
+                   max_width,
+                   text.data(), text.data() + text.size());
+    }
+
+    std::uint32_t load_image(std::string_view url) override {
+        const std::string key(url);
+        if (auto it = image_cache_.find(key); it != image_cache_.end())
+            return static_cast<std::uint32_t>(it->second);
+        const int img = nvgCreateImage(vg_, key.c_str(), 0);
+        if (img <= 0) return 0;
+        image_cache_[key] = img;
+        return static_cast<std::uint32_t>(img);
+    }
+
+    Size image_size(std::uint32_t image) override {
+        if (image == 0) return {};
+        int w = 0, h = 0;
+        nvgImageSize(vg_, static_cast<int>(image), &w, &h);
+        return {w, h};
+    }
+
+    void draw_image(std::uint32_t image, const Rect& dst, const Rect& /*src*/) override {
+        if (image == 0) return;
+        NVGpaint p = nvgImagePattern(vg_,
+                                     static_cast<float>(dst.x), static_cast<float>(dst.y),
+                                     static_cast<float>(dst.w), static_cast<float>(dst.h),
+                                     0.0f, static_cast<int>(image), 1.0f);
+        nvgBeginPath(vg_);
+        nvgRect(vg_, static_cast<float>(dst.x), static_cast<float>(dst.y),
+                static_cast<float>(dst.w), static_cast<float>(dst.h));
+        nvgFillPaint(vg_, p);
+        nvgFill(vg_);
+    }
+
+    void push_clip(const Rect& r) override {
+        nvgSave(vg_);
+        nvgScissor(vg_, static_cast<float>(r.x), static_cast<float>(r.y),
+                   static_cast<float>(r.w), static_cast<float>(r.h));
+    }
+
+    void pop_clip() override { nvgRestore(vg_); }
+
+    void set_default_face(int face) { default_face_ = face; }
+
+private:
+    static constexpr std::uint32_t pack_handle(std::uint16_t face, std::uint16_t size) {
+        return (static_cast<std::uint32_t>(face) << 16) | static_cast<std::uint32_t>(size);
+    }
+    void apply_handle(std::uint32_t handle) {
+        const int face = static_cast<int>((handle >> 16) & 0xFFFF);
+        const int size = static_cast<int>(handle & 0xFFFF);
+        nvgFontFaceId(vg_, face);
+        nvgFontSize(vg_, static_cast<float>(size));
+        // Layout treats Y as the top edge of the text box. NanoVG's
+        // default is BASELINE — flip so callers get the intuitive
+        // meaning.
+        nvgTextAlign(vg_, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+    }
+
+    NVGcontext*                                  vg_{nullptr};
+    int                                          width_{0};
+    int                                          height_{0};
+    int                                          default_face_{-1};
+    std::unordered_map<std::string, int>         image_cache_;
+};
+
+}  // namespace
+
+namespace detail {
+
+std::unique_ptr<Painter> make_nanovg_painter(NVGcontext* vg) {
+    auto painter = std::make_unique<NanoVGPainter>(vg);
+    // If a default font has been registered with the context, surface
+    // it so handles without an explicit family fall back to it.
+    int face = nvgFindFont(vg, "sans");
+    if (face < 0) face = nvgFindFont(vg, "sans-serif");
+    if (face >= 0) painter->set_default_face(face);
+    return painter;
+}
+
+std::uint32_t register_font_file(NVGcontext* vg, const char* family, const char* ttf_path) {
+    const int id = nvgCreateFont(vg, family, ttf_path);
+    return id >= 0 ? static_cast<std::uint32_t>(id) : 0u;
+}
+
+std::string_view register_default_font(NVGcontext* vg) {
+    // Try a list of platform-typical sans-serif files. First match wins.
+    // Registered under "sans" *and* the embedder-friendly aliases.
+    static constexpr const char* kCandidates[] = {
+#if defined(__APPLE__)
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
+#elif defined(__linux__)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+#elif defined(_WIN32)
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/calibri.ttf",
+#endif
+    };
+    for (const char* path : kCandidates) {
+        if (nvgCreateFont(vg, "sans", path) >= 0) {
+            nvgCreateFont(vg, "sans-serif", path);
+            return "sans";
+        }
+    }
+    return {};
+}
+
+}  // namespace detail
+
+#endif  // AFFINEUI_STUB_BUILD
+
+}  // namespace affineui

@@ -1,0 +1,163 @@
+#pragma once
+
+#include "affineui/types.h"
+
+#include <cstdint>
+#include <cstring>
+#include <string_view>
+#include <vector>
+
+namespace affineui::detail {
+
+/// Paint primitive variants. Designed to be:
+///   - POD (no destructors, no heap fields) so a DisplayList is a
+///     plain block of memory that hashes byte-by-byte.
+///   - Small (~32 bytes each) so a moderate UI's worth of ops fits
+///     in one or two cache pages.
+///   - Stable across frames — same content produces byte-identical
+///     ops, which is what makes content-hashing a cheap idle skip.
+///
+/// Text payloads are stored separately in DisplayList::text_pool;
+/// DrawText carries an offset + length into that pool.
+enum class PaintOpKind : std::uint8_t {
+    FillRect,
+    StrokeRect,
+    FillRoundedRect,
+    StrokeRoundedRect,
+    DrawText,
+    DrawTextBox,
+    DrawImage,
+    PushClip,
+    PopClip,
+};
+
+struct PaintOp {
+    PaintOpKind kind;
+    std::uint8_t  pad0{0};
+    std::uint16_t pad1{0};
+
+    // 24 bytes of payload; each op uses the variant that matches its
+    // kind. We never call placement new on these — they're all
+    // trivially copyable.
+    union Payload {
+        struct {
+            std::int16_t  x, y, w, h;
+            std::uint32_t rgba;
+            std::uint32_t reserved;
+        } fill_rect;
+
+        struct {
+            std::int16_t  x, y, w, h;
+            std::uint32_t rgba;
+            float         thickness;
+        } stroke_rect;
+
+        struct {
+            std::int16_t  x, y, w, h;
+            std::uint32_t rgba;
+            float         radius;
+        } fill_rounded;
+
+        struct {
+            std::int16_t  x, y, w, h;
+            std::uint32_t rgba;
+            float         radius;
+            float         thickness;
+        } stroke_rounded;
+
+        struct {
+            std::uint32_t font_handle;
+            std::int16_t  x, y;
+            std::uint32_t rgba;
+            std::uint32_t text_offset;
+            std::uint16_t text_len;
+            std::uint16_t pad;
+        } draw_text;
+
+        // Same shape as draw_text plus a wrap-width. NanoVG's
+        // nvgTextBox replays this at rasterize time.
+        struct {
+            std::uint32_t font_handle;
+            std::int16_t  x, y;
+            std::uint32_t rgba;
+            std::uint32_t text_offset;
+            std::uint16_t text_len;
+            std::uint16_t max_width;
+        } draw_text_box;
+
+        struct {
+            std::uint32_t image_handle;
+            std::int16_t  x, y, w, h;
+            std::int16_t  sx, sy, sw, sh;
+        } draw_image;
+
+        struct {
+            std::int16_t x, y, w, h;
+            std::uint32_t pad0_;
+            std::uint32_t pad1_;
+        } clip;
+
+        std::uint8_t raw[24];
+    } p{};
+};
+
+static_assert(sizeof(PaintOp) == 28, "PaintOp must stay compact");
+static_assert(std::is_trivially_copyable_v<PaintOp>,
+              "PaintOp must be trivially copyable for byte-hashing");
+
+/// A frame's worth of paint commands.
+///
+/// Two consumers:
+///   1. **Hash** the buffer to detect "nothing changed" — that drives
+///      the idle-frame skip in the rasterize stage.
+///   2. **Replay** through a real Painter to render into an FBO when
+///      the hash *has* changed.
+///
+/// Both consumers are cheap. The expensive work (cascade, layout,
+/// glyph rasterization) lives upstream of the DisplayList and is
+/// gated by the dirty bits documented in DESIGN.md.
+struct DisplayList {
+    std::vector<PaintOp>   ops;
+    std::vector<char>      text_pool;  // contiguous text storage
+    std::uint64_t          content_hash{0};
+
+    void clear() {
+        ops.clear();
+        text_pool.clear();
+        content_hash = 0;
+    }
+
+    // Push a text payload into the pool; returns (offset, length).
+    std::pair<std::uint32_t, std::uint16_t> intern_text(std::string_view s) {
+        const auto off = static_cast<std::uint32_t>(text_pool.size());
+        text_pool.insert(text_pool.end(), s.begin(), s.end());
+        return {off, static_cast<std::uint16_t>(s.size())};
+    }
+
+    std::string_view text_at(std::uint32_t offset, std::uint16_t len) const {
+        if (offset + len > text_pool.size()) return {};
+        return std::string_view(text_pool.data() + offset, len);
+    }
+
+    // FNV-1a over the byte representation of ops + text_pool. Same
+    // content → same hash; different content → astronomically unlikely
+    // collision for our scale. Run once after the builder finalizes,
+    // stored in `content_hash`.
+    void finalize_hash() {
+        constexpr std::uint64_t kOffset = 0xcbf29ce484222325ull;
+        constexpr std::uint64_t kPrime  = 0x100000001b3ull;
+        std::uint64_t h = kOffset;
+        const auto mix = [&](const void* data, std::size_t n) {
+            const auto* p = static_cast<const std::uint8_t*>(data);
+            for (std::size_t i = 0; i < n; ++i) {
+                h ^= p[i];
+                h *= kPrime;
+            }
+        };
+        if (!ops.empty())       mix(ops.data(),       ops.size() * sizeof(PaintOp));
+        if (!text_pool.empty()) mix(text_pool.data(), text_pool.size());
+        content_hash = h;
+    }
+};
+
+}  // namespace affineui::detail
