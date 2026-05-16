@@ -113,18 +113,23 @@ public:
                                bool /*italic*/) override {
         // NanoVG addresses fonts by face id + a per-frame size. We pack
         // (face_id, size) into a handle so draw_text/measure_text can
-        // reconstitute it without another lookup.
+        // reconstitute it without another lookup. Top bit of `size`
+        // = the synthetic-bold flag (see below).
         //
-        // Weight selection: NanoVG has no "synthetic bold" — every
-        // weight is its own face. The CSS spec says weight 500
-        // falls back to Regular when no Medium face is available.
-        // SF Pro (the macOS regular face) has a heavier stroke than
-        // Helvetica did, so treating 500 as Regular now reads close
-        // to a browser's Medium fallback. Anything >= 600 picks the
-        // bold face. Phase 4 polish: load a real Medium via the
-        // variable-font weight axis on SFNS.ttf for proper 500.
+        // Weight selection three-tier:
+        //   < 500   →  regular face, no synth
+        //   500-599 →  regular face + synthetic bold (double-draw at
+        //              +0.5px to thicken strokes — matches what
+        //              browsers do when no Medium variant is available)
+        //   >= 600  →  the bold face if loaded, regular otherwise
+        //
+        // The synth fallback gives weight 500 visible heavier strokes
+        // than regular without over-bolding to the full bold face. A
+        // real fix lands when we plumb variable-font weight axes
+        // (SFNS.ttf has a continuous weight axis baked in).
         const std::string family_str(family);
         const bool        prefer_bold = weight >= 600;
+        const bool        synth_bold  = (weight >= 500 && weight < 600);
 
         int face = -1;
         if (prefer_bold) {
@@ -134,9 +139,9 @@ public:
         if (face < 0) face = nvgFindFont(vg_, family_str.c_str());
         if (face < 0) face = default_face_;
         if (face < 0) return 0;
-        const std::uint32_t handle = pack_handle(static_cast<std::uint16_t>(face),
-                                                 static_cast<std::uint16_t>(size_px));
-        return handle;
+        return pack_handle(static_cast<std::uint16_t>(face),
+                           static_cast<std::uint16_t>(size_px),
+                           synth_bold);
     }
 
     int measure_text(std::uint32_t handle, std::string_view text) override {
@@ -171,8 +176,15 @@ public:
         if (handle == 0) return;
         apply_handle(handle);
         nvgFillColor(vg_, to_nvg(color));
-        nvgText(vg_, static_cast<float>(pos.x), static_cast<float>(pos.y),
-                text.data(), text.data() + text.size());
+        const float fx = static_cast<float>(pos.x);
+        const float fy = static_cast<float>(pos.y);
+        nvgText(vg_, fx, fy, text.data(), text.data() + text.size());
+        if (handle_is_synth_bold(handle)) {
+            // Synthetic medium: a second pass offset by half a pixel
+            // thickens strokes without doubling them. Cheap and gives
+            // a visible "between regular and bold" weight.
+            nvgText(vg_, fx + 0.5f, fy, text.data(), text.data() + text.size());
+        }
     }
 
     Size measure_text_box(std::uint32_t handle,
@@ -207,10 +219,14 @@ public:
         if (handle == 0 || text.empty()) return;
         apply_handle(handle);
         nvgFillColor(vg_, to_nvg(color));
-        nvgTextBox(vg_,
-                   static_cast<float>(pos.x), static_cast<float>(pos.y),
-                   max_width,
+        const float fx = static_cast<float>(pos.x);
+        const float fy = static_cast<float>(pos.y);
+        nvgTextBox(vg_, fx, fy, max_width,
                    text.data(), text.data() + text.size());
+        if (handle_is_synth_bold(handle)) {
+            nvgTextBox(vg_, fx + 0.5f, fy, max_width,
+                       text.data(), text.data() + text.size());
+        }
     }
 
     std::uint32_t load_image(std::string_view url) override {
@@ -255,12 +271,23 @@ public:
     void set_bold_face   (int face) { bold_face_    = face; }
 
 private:
-    static constexpr std::uint32_t pack_handle(std::uint16_t face, std::uint16_t size) {
-        return (static_cast<std::uint32_t>(face) << 16) | static_cast<std::uint32_t>(size);
+    // Handle bit layout (32 bits):
+    //   [31..16]  face id (16 bits)
+    //   [15]      synth-bold flag (1 bit)
+    //   [14..0]   size px (15 bits — max 32767, plenty for any UI)
+    static constexpr std::uint32_t pack_handle(std::uint16_t face,
+                                               std::uint16_t size,
+                                               bool synth_bold = false) {
+        const std::uint32_t s = (static_cast<std::uint32_t>(size) & 0x7FFFu)
+                              | (synth_bold ? 0x8000u : 0u);
+        return (static_cast<std::uint32_t>(face) << 16) | s;
+    }
+    static constexpr bool handle_is_synth_bold(std::uint32_t handle) {
+        return (handle & 0x8000u) != 0u;
     }
     void apply_handle(std::uint32_t handle) {
         const int face = static_cast<int>((handle >> 16) & 0xFFFF);
-        const int size = static_cast<int>(handle & 0xFFFF);
+        const int size = static_cast<int>(handle & 0x7FFF);
         nvgFontFaceId(vg_, face);
         nvgFontSize(vg_, static_cast<float>(size));
         // Layout treats Y as the top edge of the text box. NanoVG's
