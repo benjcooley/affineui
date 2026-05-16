@@ -71,10 +71,21 @@ loops, not the other way around.
       clip intersection (NanoVG's scissor replaces rather than
       intersects today)
 - [ ] Keyboard routing for focused inputs (`on_key_press`, IME stub)
-- [ ] Inline-style scan for properties lexbor 2.4 doesn't expose
-      (`border-radius`, `gap`, `cursor`, `background:` shorthand)
-- [ ] `examples/01_bootstrap` — Bootstrap-CSS-styled page with a
-      working nav, validates the cascade against real-world CSS
+- [x] `examples/01_bootstrap` — Bootstrap-flavored page exercises
+      the cascade against real-world patterns. Surfaced bugs got
+      fixed inline: CSS cascade ordering (lexbor's weak walk
+      inverted specificity), missing body bg pre-pass, page-padding
+      driven by body CSS not a hardcoded constant, width/height
+      standalone parsing, gap-fill scanner for border-radius /
+      border-color / gap from CSS rule blocks (lexbor 2.4 silently
+      drops them), inline-block sizing for `<button>`, text measure
+      ceil to avoid invisible word wrap.
+- [ ] `<style>` shorthand expansion the demo had to work around
+      (`background:`, `font:`, `padding:`/`margin:` shorthands
+      beyond what lexbor expands for us)
+- [ ] Synthetic line-box wrapper so multiple inline / inline-block
+      siblings share a row instead of stacking (today's gap when
+      Save + Cancel buttons live next to each other)
 
 ## Phase 3 — Imm-mode layer ⏳
 
