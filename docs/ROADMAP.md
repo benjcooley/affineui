@@ -101,8 +101,13 @@ loops, not the other way around.
 - [ ] font-family fallback walk — today only the first family in the
       list is honored; spec says try each in order until an installed
       face is found
-- [ ] Per-corner `border-radius: TL TR BR BL` and `border-radius:
-      H / V` (currently uniform single value)
+- [x] Per-corner `border-radius` (TL/TR/BR/BL) — CSS 1/2/3/4-value
+      shorthand pairing applied at scan time; Painter grows
+      `*_rounded_rect_varying` ops backed by NVG's
+      `nvgRoundedRectVarying`; works in both CSS rule blocks and
+      inline `style="..."` attributes.
+- [ ] Elliptical radii (`border-radius: H / V`, separate horizontal
+      and vertical radii per corner)
 - [x] Synthetic line-box wrapper so multiple inline / inline-block
       siblings share a row (collect_blocks tracks an open run; the
       first inline child opens a flex-row-wrap synthetic Block;
