@@ -56,7 +56,8 @@ int main() {
         .btn-ghost:active { background-color: #cfe2ff; }
 
         .item       { padding: 6px 0; }
-        .item-text  { font-size: 16px; color: #212529; }
+        .item-text  { font-size: 16px; color: #212529;
+                      margin-left: 8px; }
         .done .item-text { color: #6c757d; }
     )");
 
@@ -83,7 +84,7 @@ int main() {
                     });
                 });
                 if (!items.empty()) {
-                    ui::button("Pop", "btn btn-ghost").on_click([state] {
+                    ui::button("Pop", "btn").on_click([state] {
                         auto s = state;
                         s.update([](auto& v) { v.pop_back(); });
                     });
@@ -97,7 +98,7 @@ int main() {
                 // call-site hash and clicks all route to the same handler).
                 ui::key(static_cast<std::uint64_t>(i));
                 if (auto _2 = ui::div(it.done ? "item done" : "item")) {
-                    ui::button(it.done ? "[x]" : "[ ]", "btn btn-ghost")
+                    ui::button(it.done ? "[x]" : "[ ]", "btn")
                         .on_click([state, i] {
                             auto s = state;
                             s.update([i](auto& v) {
