@@ -89,9 +89,18 @@ loops, not the other way around.
       / `border-radius` / `gap` already landed earlier in the same
       pass. Color portion only — image / position / size still TBD
       when those paint features land.
-- [ ] `font:` shorthand recovery and `font-family` / `font-style` /
-      `line-height` longhand cascade arms (lexbor parses these; we
-      just don't read them yet)
+- [x] `font-family` / `font-style` / `line-height` longhand cascade
+      arms. font-style picks italic / bold-italic faces (loaded from
+      .ttc face indices on macOS); line-height threads through both
+      Yoga measure and NanoVG paint via a new Painter contract; font-
+      family interns through StyleStore::font_family_of so the
+      element's resolve_font lookup picks the right family.
+- [ ] `font:` shorthand decomposition (lexbor doesn't expose it; we
+      can recover via the gap-fill scanner the same way we did with
+      `background:`)
+- [ ] font-family fallback walk — today only the first family in the
+      list is honored; spec says try each in order until an installed
+      face is found
 - [ ] Per-corner `border-radius: TL TR BR BL` and `border-radius:
       H / V` (currently uniform single value)
 - [x] Synthetic line-box wrapper so multiple inline / inline-block
