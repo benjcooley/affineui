@@ -100,6 +100,21 @@ struct PseudoRule {
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
+// Lexbor 2.4 doesn't expose `border-radius` or `border-color` (and
+// likely some other properties); declarations for these are silently
+// dropped at parse time. RuleFill carries the values we recover via a
+// raw-text pre-scan of each attached stylesheet, keyed by the same
+// CompoundSelector chain we use for pseudo overlays. Applied after
+// the base resolve but before inline-style scans (which still win,
+// matching CSS specificity for `style=""`).
+struct RuleFill {
+    CompoundSelector              target;
+    std::vector<CompoundSelector> ancestors;
+    int                           border_radius_px{-1};   // -1 = unset
+    std::uint32_t                 border_rgba{0};
+    bool                          has_border_color{false};
+};
+
 // Per-element state bits in StyleStore::state_bits(). :focus claims
 // bit 2 later when keyboard routing lands.
 constexpr std::uint8_t kHoverStateBit  = 1u << 0;
@@ -147,6 +162,10 @@ struct DocumentImpl {
     // during attach. Pointers in `decls` reference rule data owned by
     // the document's CSS memory pool; valid for the document's lifetime.
     std::vector<PseudoRule>            pseudo_rules;
+    // Gap-fill rules carrying values for properties lexbor 2.4 drops
+    // (border-radius, border-color). Populated by scan_rule_fills()
+    // from the raw CSS source at attach time.
+    std::vector<RuleFill>              rule_fills;
     std::unique_ptr<StyleResolver>     resolver;
     ResolvedStyle                      root_style{};  // inheritance root
 #endif
@@ -423,6 +442,258 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
     }
 }
 
+// ── Gap-fill scanner: properties lexbor 2.4 silently drops ────────
+//
+// `border-radius` and `border-color` are absent from lexbor's CSS
+// module — declarations using them parse but the values vanish. We
+// recover them with a small dedicated scanner over the original CSS
+// source. The scanner builds a side-table (RuleFill) of selector +
+// extracted values that the cascade overlay applies after the base
+// resolve. Selector grammar matches what scan_pseudo_rules supports:
+// simple selectors (tag / class / id) AND'd in compounds, compounds
+// joined by descendant combinator. Anything richer is silently
+// skipped at scan time.
+
+// ASCII-only whitespace test we use throughout (CSS is ASCII for
+// our purposes). Avoids std::isspace pulling in locale.
+bool is_css_ws(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
+}
+std::string_view rtrim_ws(std::string_view s) {
+    while (!s.empty() && is_css_ws(s.back())) s.remove_suffix(1);
+    return s;
+}
+std::string_view ltrim_ws(std::string_view s) {
+    while (!s.empty() && is_css_ws(s.front())) s.remove_prefix(1);
+    return s;
+}
+std::string_view trim_css_ws(std::string_view s) { return ltrim_ws(rtrim_ws(s)); }
+
+// Chunk raw CSS into (selector, decls) rules. Handles `/* ... */`
+// comments and skips `@`-prefixed at-rules. Doesn't try to validate
+// the body — it's just collecting the source range so other helpers
+// can scan inside it for the properties we care about.
+struct RawRule { std::string_view selector; std::string_view decls; };
+
+std::vector<RawRule> split_css_rules(std::string_view src) {
+    std::vector<RawRule> out;
+    std::size_t i = 0;
+    auto skip_ws_and_comments = [&] {
+        for (;;) {
+            while (i < src.size() && is_css_ws(src[i])) ++i;
+            if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '*') {
+                i += 2;
+                while (i + 1 < src.size() &&
+                       !(src[i] == '*' && src[i + 1] == '/')) ++i;
+                if (i + 1 < src.size()) i += 2;
+            } else break;
+        }
+    };
+    while (i < src.size()) {
+        skip_ws_and_comments();
+        if (i >= src.size()) break;
+        if (src[i] == '@') {
+            // Skip the at-rule. Either ends at ';' (descriptor form)
+            // or wraps a `{ ... }` block we step over balanced.
+            while (i < src.size() && src[i] != ';' && src[i] != '{') ++i;
+            if (i < src.size() && src[i] == '{') {
+                int depth = 1; ++i;
+                while (i < src.size() && depth > 0) {
+                    if (src[i] == '{') ++depth;
+                    else if (src[i] == '}') --depth;
+                    ++i;
+                }
+            } else if (i < src.size()) {
+                ++i;
+            }
+            continue;
+        }
+        const std::size_t sel_start = i;
+        while (i < src.size() && src[i] != '{') ++i;
+        if (i >= src.size()) break;
+        const auto sel = src.substr(sel_start, i - sel_start);
+        ++i;  // skip '{'
+        const std::size_t decl_start = i;
+        int depth = 1;
+        while (i < src.size() && depth > 0) {
+            if (src[i] == '{') ++depth;
+            else if (src[i] == '}' && --depth == 0) break;
+            ++i;
+        }
+        if (i >= src.size()) break;
+        const auto decls = src.substr(decl_start, i - decl_start);
+        ++i;  // skip '}'
+        out.push_back({sel, decls});
+    }
+    return out;
+}
+
+// Parse a static (no pseudo, no `>` / `+` / `~`, no attribute selector)
+// selector text into a target compound + ancestor chain matching the
+// shape scan_pseudo_rules builds. Returns false on anything we don't
+// support (the rule's other properties still apply through lexbor;
+// we just won't fill the missing ones).
+bool parse_static_selector(std::string_view sel,
+                           CompoundSelector& target,
+                           std::vector<CompoundSelector>& ancestors) {
+    target = {};
+    ancestors.clear();
+
+    std::vector<CompoundSelector> compounds;
+    std::size_t i = 0;
+    while (i < sel.size()) {
+        while (i < sel.size() && is_css_ws(sel[i])) ++i;
+        if (i >= sel.size()) break;
+        CompoundSelector compound;
+        // Optional leading tag (anything not starting with . # or :).
+        if (sel[i] != '.' && sel[i] != '#' && sel[i] != ':') {
+            const std::size_t s = i;
+            while (i < sel.size() && sel[i] != '.' && sel[i] != '#' &&
+                   sel[i] != ':' && !is_css_ws(sel[i])) ++i;
+            if (s == i) return false;
+            compound.simples.push_back(
+                {SimpleSelector::Kind::Tag, std::string(sel.substr(s, i - s))});
+        }
+        // Then any number of `.name` / `#name` segments.
+        while (i < sel.size() && !is_css_ws(sel[i])) {
+            if (sel[i] == ':') return false;  // pseudo — out of scope
+            if (sel[i] != '.' && sel[i] != '#') return false;
+            const auto kind = (sel[i] == '.')
+                ? SimpleSelector::Kind::Class
+                : SimpleSelector::Kind::Id;
+            ++i;
+            const std::size_t s = i;
+            while (i < sel.size() && sel[i] != '.' && sel[i] != '#' &&
+                   sel[i] != ':' && !is_css_ws(sel[i])) ++i;
+            if (s == i) return false;
+            compound.simples.push_back(
+                {kind, std::string(sel.substr(s, i - s))});
+        }
+        if (compound.simples.empty()) return false;
+        compounds.push_back(std::move(compound));
+    }
+    if (compounds.empty()) return false;
+    target = std::move(compounds.back());
+    compounds.pop_back();
+    ancestors.reserve(compounds.size());
+    for (auto it = compounds.rbegin(); it != compounds.rend(); ++it) {
+        ancestors.push_back(std::move(*it));
+    }
+    return true;
+}
+
+// Find `key: <integer>` (optional unit, ignored) in a decls block.
+// Returns -1 when absent. Property starts must be at the beginning
+// of the block or immediately after a `;` (and any whitespace).
+int find_decl_px(std::string_view decls, std::string_view key) {
+    std::size_t pos = 0;
+    while (pos < decls.size()) {
+        const auto kp = decls.find(key, pos);
+        if (kp == std::string_view::npos) return -1;
+        const bool at_boundary =
+            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
+        if (!at_boundary) { pos = kp + 1; continue; }
+        auto rest = decls.substr(kp + key.size());
+        rest = ltrim_ws(rest);
+        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
+        rest = ltrim_ws(rest.substr(1));
+        int v = 0; bool any = false;
+        while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
+            v = v * 10 + (rest.front() - '0');
+            rest.remove_prefix(1);
+            any = true;
+        }
+        return any ? v : -1;
+    }
+    return -1;
+}
+
+// Find `key: #RGB|#RRGGBB|#RRGGBBAA`. Returns {packed_rgba, true} on
+// success, {0, false} otherwise.
+std::pair<std::uint32_t, bool> find_decl_hex(std::string_view decls,
+                                             std::string_view key) {
+    std::size_t pos = 0;
+    while (pos < decls.size()) {
+        const auto kp = decls.find(key, pos);
+        if (kp == std::string_view::npos) return {0, false};
+        const bool at_boundary =
+            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
+        if (!at_boundary) { pos = kp + 1; continue; }
+        auto rest = decls.substr(kp + key.size());
+        rest = ltrim_ws(rest);
+        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
+        rest = ltrim_ws(rest.substr(1));
+        if (rest.empty() || rest.front() != '#') { pos = kp + 1; continue; }
+        rest.remove_prefix(1);
+        std::uint32_t v = 0;
+        int n = 0;
+        while (!rest.empty() && n < 8) {
+            const char c = rest.front();
+            int d;
+            if      (c >= '0' && c <= '9') d = c - '0';
+            else if (c >= 'a' && c <= 'f') d = 10 + (c - 'a');
+            else if (c >= 'A' && c <= 'F') d = 10 + (c - 'A');
+            else break;
+            v = (v << 4) | static_cast<std::uint32_t>(d);
+            rest.remove_prefix(1);
+            ++n;
+        }
+        if (n == 3) {
+            // #RGB → expand each nibble to a byte.
+            const auto r = (v >> 8) & 0xFu;
+            const auto g = (v >> 4) & 0xFu;
+            const auto b =  v       & 0xFu;
+            v = (r << 28) | (r << 24)
+              | (g << 20) | (g << 16)
+              | (b << 12) | (b <<  8)
+              | 0xFFu;
+        } else if (n == 6) {
+            v = (v << 8) | 0xFFu;
+        } else if (n != 8) {
+            return {0, false};
+        }
+        return {v, true};
+    }
+    return {0, false};
+}
+
+// Walk the raw CSS source for each rule's `border-radius` and
+// `border-color` declarations. For rules whose selector(s) parse as
+// static (no pseudo / no advanced combinators), append a RuleFill
+// entry per comma-separated group.
+void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
+    for (const auto& raw : split_css_rules(css)) {
+        const int radius = find_decl_px(raw.decls, "border-radius");
+        const auto bc    = find_decl_hex(raw.decls, "border-color");
+        if (radius < 0 && !bc.second) continue;
+
+        // Each comma-separated group becomes its own RuleFill.
+        std::string_view sel_text = trim_css_ws(raw.selector);
+        std::size_t s = 0;
+        while (s <= sel_text.size()) {
+            const auto comma = sel_text.find(',', s);
+            const auto group = trim_css_ws(sel_text.substr(s,
+                (comma == std::string_view::npos
+                     ? sel_text.size() : comma) - s));
+            if (!group.empty()) {
+                CompoundSelector target;
+                std::vector<CompoundSelector> ancestors;
+                if (parse_static_selector(group, target, ancestors)) {
+                    RuleFill rf;
+                    rf.target            = std::move(target);
+                    rf.ancestors         = std::move(ancestors);
+                    rf.border_radius_px  = radius;
+                    rf.border_rgba       = bc.first;
+                    rf.has_border_color  = bc.second;
+                    out.push_back(std::move(rf));
+                }
+            }
+            if (comma == std::string_view::npos) break;
+            s = comma + 1;
+        }
+    }
+}
+
 void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
     if (css.empty()) return;
     // Parse via the document's own CSS parser (pre-wired with the
@@ -437,6 +708,13 @@ void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
     if (lxb_html_document_stylesheet_attach(impl.doc, sst) == LXB_STATUS_OK) {
         impl.sheets.push_back(sst);
         scan_pseudo_rules(sst, impl.pseudo_rules);
+        // Recover properties lexbor doesn't expose from the raw CSS
+        // source. attach_stylesheet's `css` argument outlives this
+        // call (UA stylesheet is static, user_stylesheet is
+        // owned by impl_, author CSS is a local that's destroyed
+        // when set_html returns — but we extract everything we need
+        // into RuleFill values here, which copy by value).
+        scan_rule_fills(css, impl.rule_fills);
     } else {
         lxb_css_stylesheet_destroy(sst, true);
     }
@@ -568,9 +846,10 @@ void collect_blocks(detail::DocumentImpl& impl,
         // up to but not including this element — exactly what
         // ancestor_chain_matches needs to walk.
         const auto sb_at_collect = impl.style_store.state_bits(id);
+        const auto elem_id_attr  = attr_string(elem, "id");
+        const auto cls_attr      = split_classes(attr_string(elem, "class"));
+
         if (sb_at_collect != 0 && !impl.pseudo_rules.empty()) {
-            const auto elem_id_attr = attr_string(elem, "id");
-            const auto cls_attr     = split_classes(attr_string(elem, "class"));
             for (const auto& pr : impl.pseudo_rules) {
                 const std::uint8_t bit =
                     (pr.pseudo == PseudoRule::Pseudo::Hover)
@@ -582,6 +861,23 @@ void collect_blocks(detail::DocumentImpl& impl,
                                             impl.blocks)) continue;
                 impl.resolver->apply_decl_list(pr.decls, rs);
             }
+        }
+
+        // Gap-fill overlay: properties lexbor 2.4 drops at parse time
+        // (border-radius, border-color) recovered from the CSS source.
+        // Same selector grammar as pseudo overlay; later rules win
+        // (the scan is in attach order, which matches CSS source
+        // order).
+        for (const auto& rf : impl.rule_fills) {
+            if (!compound_matches(rf.target, tag, elem_id_attr, cls_attr))
+                continue;
+            if (!ancestor_chain_matches(rf.ancestors, parent_idx,
+                                        impl.blocks)) continue;
+            if (rf.border_radius_px >= 0)
+                rs.computed.border_radius_px =
+                    static_cast<std::int16_t>(rf.border_radius_px);
+            if (rf.has_border_color)
+                rs.animated.border_rgba = rf.border_rgba;
         }
 
         impl.style_store.computed(id) = rs.computed;
@@ -648,6 +944,7 @@ void Document::set_html(std::string_view html) {
     impl_->resolver.reset();
     impl_->sheets.clear();
     impl_->pseudo_rules.clear();
+    impl_->rule_fills.clear();
     impl_->hovered_chain.clear();
     impl_->active_chain.clear();
     impl_->active_idx = -1;
@@ -1085,6 +1382,21 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
     auto parent = parent_resolved(impl, idx);
     auto rs     = impl.resolver->resolve(elem, parent);
     apply_pseudo_overlay(impl, block, rs);
+    // Re-apply gap-fill overlay too — restyle_block runs on the
+    // dispatch path (hover/active toggles), so the bg-color from a
+    // pseudo rule needs to coexist with the rule-block border-color
+    // and border-radius the same way collect_blocks layers them.
+    for (const auto& rf : impl.rule_fills) {
+        if (!compound_matches(rf.target, block.tag, block.elem_id, block.classes))
+            continue;
+        if (!ancestor_chain_matches(rf.ancestors, block.parent_idx, impl.blocks))
+            continue;
+        if (rf.border_radius_px >= 0)
+            rs.computed.border_radius_px =
+                static_cast<std::int16_t>(rf.border_radius_px);
+        if (rf.has_border_color)
+            rs.animated.border_rgba = rf.border_rgba;
+    }
     impl.style_store.computed(block.id) = rs.computed;
     impl.style_store.animated(block.id) = rs.animated;
     impl.paint_dirty = true;
