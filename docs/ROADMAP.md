@@ -49,8 +49,12 @@ loops, not the other way around.
 - [x] Mouse routing (move + button down/up) wired through `Ui::dispatch`
 - [x] Cursor sync (pointer/text/crosshair) inside the event callback so
       Cocoa's `mouseMoved:` lands in the same run-loop turn
-- [ ] `:hover` / `:active` pseudo-class through cascade + targeted
-      repaint
+- [x] `:hover` pseudo-class via side-table overlay — single-compound
+      selectors only (`button:hover`, `.btn:hover`, `#id:hover`).
+      Ancestor chain tracking + per-element re-resolve on toggle.
+- [ ] `:hover` widened to descendant / multi-class compounds via
+      `lxb_selectors_find` with a state-aware match callback
+- [ ] `:active` (mouse-down state) reuses the same overlay machinery
 - [ ] Scroll (wheel + drag) on `overflow: auto|scroll` containers
 - [ ] Keyboard routing for focused inputs (`on_key_press`, IME stub)
 - [ ] Inline-style scan for properties lexbor 2.4 doesn't expose
