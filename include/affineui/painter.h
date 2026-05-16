@@ -1,0 +1,91 @@
+#pragma once
+
+#include "affineui/types.h"
+
+#include <string_view>
+
+namespace affineui {
+
+/// Abstract painter interface. The default implementation wraps
+/// NanoVG-on-sokol_gfx, but the embedder can supply their own (useful
+/// for headless image rendering or piping into another graphics stack).
+///
+/// Painters are stateful — clip stacks and current transforms persist
+/// across calls within a single `Document::draw()` invocation. The
+/// frame-level begin/end is owned by the App; the painter sees only
+/// the inside of a frame.
+class Painter {
+public:
+    virtual ~Painter() = default;
+
+    // ── Frame lifecycle (called by Document::draw) ──────────────────
+    virtual void begin_frame(int width, int height, float dpi_scale) = 0;
+    virtual void end_frame()                                          = 0;
+
+    // ── Fills & strokes ─────────────────────────────────────────────
+    virtual void fill_rect(const Rect& r, Color color)                = 0;
+    virtual void stroke_rect(const Rect& r, Color color, float w)     = 0;
+    virtual void fill_rounded_rect(const Rect& r, float radius, Color color) = 0;
+    virtual void stroke_rounded_rect(const Rect& r, float radius, Color color, float w) = 0;
+
+    // ── Text ────────────────────────────────────────────────────────
+    /// Returns an opaque font handle. Implementation-defined; zero means
+    /// "use default fallback face."
+    virtual std::uint32_t resolve_font(std::string_view family,
+                                       int size_px,
+                                       int weight,
+                                       bool italic) = 0;
+    virtual int  measure_text(std::uint32_t font, std::string_view text) = 0;
+
+    /// Per-font-at-size vertical metrics. Used by layout to size text
+    /// runs without guessing — the embedder's actual glyph bbox drives
+    /// the content area, which keeps top/bottom padding symmetric.
+    ///
+    /// `ascender`    : pixels above the baseline (font's tallest glyph extent)
+    /// `descender`   : pixels below the baseline, **positive** value
+    /// `line_height` : recommended line-to-line distance (CSS "normal")
+    ///
+    /// `text_height = ascender + descender` is the tight rendered
+    /// bounding box for a single line of text in this font.
+    struct TextMetrics {
+        float ascender{0.0f};
+        float descender{0.0f};
+        float line_height{0.0f};
+    };
+    virtual TextMetrics text_metrics(std::uint32_t font) = 0;
+
+    virtual void draw_text(std::uint32_t font,
+                           const Point& pos,
+                           std::string_view text,
+                           Color color) = 0;
+
+    /// Measure the rendered bounding box of `text` when wrapped to a
+    /// row width of `max_width` px. Returns the actual rendered width
+    /// (≤ max_width) and the total height (potentially many lines).
+    /// Used by the layout pass to size text leaves before paint runs.
+    virtual Size measure_text_box(std::uint32_t  font,
+                                  std::string_view text,
+                                  float          max_width) = 0;
+
+    /// Render `text` wrapped to `max_width`. Position is the top-left
+    /// of the wrapped text block.
+    virtual void draw_text_box(std::uint32_t  font,
+                               const Point&   pos,
+                               std::string_view text,
+                               Color          color,
+                               float          max_width) = 0;
+
+    // ── Images ──────────────────────────────────────────────────────
+    /// Returns an opaque image handle. Zero on miss.
+    virtual std::uint32_t load_image(std::string_view url) = 0;
+    virtual Size          image_size(std::uint32_t image)  = 0;
+    virtual void          draw_image(std::uint32_t image,
+                                     const Rect&   dst,
+                                     const Rect&   src) = 0;
+
+    // ── Clipping ────────────────────────────────────────────────────
+    virtual void push_clip(const Rect& r) = 0;
+    virtual void pop_clip()               = 0;
+};
+
+}  // namespace affineui

@@ -1,0 +1,72 @@
+#pragma once
+
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <string_view>
+
+namespace affineui {
+
+struct Color {
+    std::uint8_t r{0}, g{0}, b{0}, a{255};
+    static constexpr Color rgb(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
+        return {r, g, b, 255};
+    }
+    static constexpr Color rgba(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
+        return {r, g, b, a};
+    }
+};
+
+struct Size {
+    int width{0};
+    int height{0};
+};
+
+struct Point {
+    int x{0};
+    int y{0};
+};
+
+struct Rect {
+    int x{0}, y{0}, w{0}, h{0};
+};
+
+enum class MouseButton : std::uint8_t { Left, Right, Middle };
+
+enum class EventType : std::uint8_t {
+    None,
+    MouseMove,
+    MouseDown,
+    MouseUp,
+    MouseWheel,
+    KeyDown,
+    KeyUp,
+    TextInput,
+    Resize,
+    FocusLost,
+    FocusGained,
+};
+
+struct Event {
+    EventType   type{EventType::None};
+    Point       pos{};
+    MouseButton button{MouseButton::Left};
+    float       wheel_dx{0.0f};
+    float       wheel_dy{0.0f};
+    int         key_code{0};
+    std::string text;  // valid for TextInput
+};
+
+/// Result of an event dispatch. If `redraw_requested` is true, the next
+/// frame should repaint; if `invalidate_view` is true, the imm view fn
+/// should be re-invoked before the next paint.
+struct DispatchResult {
+    bool redraw_requested{false};
+    bool invalidate_view{false};
+};
+
+/// Resource loader hook. Given a URL ("app:///main.css", "https://...",
+/// "data:image/png;base64,..."), returns the raw bytes or empty on miss.
+using ResourceLoader = std::function<std::string(std::string_view url)>;
+
+}  // namespace affineui
