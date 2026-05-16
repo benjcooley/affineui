@@ -100,17 +100,18 @@ struct PseudoRule {
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
-// Lexbor 2.4 doesn't expose `border-radius` or `border-color` (and
-// likely some other properties); declarations for these are silently
-// dropped at parse time. RuleFill carries the values we recover via a
-// raw-text pre-scan of each attached stylesheet, keyed by the same
-// CompoundSelector chain we use for pseudo overlays. Applied after
-// the base resolve but before inline-style scans (which still win,
-// matching CSS specificity for `style=""`).
+// Lexbor 2.4 doesn't expose `border-radius`, `border-color`, or `gap`
+// — declarations for these are silently dropped at parse time. RuleFill
+// carries the values we recover via a raw-text pre-scan of each
+// attached stylesheet, keyed by the same CompoundSelector chain we use
+// for pseudo overlays. Applied after the base resolve but before
+// inline-style scans (which still win, matching CSS specificity for
+// `style=""`).
 struct RuleFill {
     CompoundSelector              target;
     std::vector<CompoundSelector> ancestors;
     int                           border_radius_px{-1};   // -1 = unset
+    int                           gap_px{-1};             // -1 = unset
     std::uint32_t                 border_rgba{0};
     bool                          has_border_color{false};
 };
@@ -665,7 +666,8 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
     for (const auto& raw : split_css_rules(css)) {
         const int radius = find_decl_px(raw.decls, "border-radius");
         const auto bc    = find_decl_hex(raw.decls, "border-color");
-        if (radius < 0 && !bc.second) continue;
+        const int gap    = find_decl_px(raw.decls, "gap");
+        if (radius < 0 && !bc.second && gap < 0) continue;
 
         // Each comma-separated group becomes its own RuleFill.
         std::string_view sel_text = trim_css_ws(raw.selector);
@@ -683,6 +685,7 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
                     rf.target            = std::move(target);
                     rf.ancestors         = std::move(ancestors);
                     rf.border_radius_px  = radius;
+                    rf.gap_px            = gap;
                     rf.border_rgba       = bc.first;
                     rf.has_border_color  = bc.second;
                     out.push_back(std::move(rf));
@@ -876,6 +879,10 @@ void collect_blocks(detail::DocumentImpl& impl,
             if (rf.border_radius_px >= 0)
                 rs.computed.border_radius_px =
                     static_cast<std::int16_t>(rf.border_radius_px);
+            if (rf.gap_px >= 0) {
+                rs.computed.row_gap    = static_cast<std::int16_t>(rf.gap_px);
+                rs.computed.column_gap = static_cast<std::int16_t>(rf.gap_px);
+            }
             if (rf.has_border_color)
                 rs.animated.border_rgba = rf.border_rgba;
         }
@@ -1400,6 +1407,10 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
         if (rf.border_radius_px >= 0)
             rs.computed.border_radius_px =
                 static_cast<std::int16_t>(rf.border_radius_px);
+        if (rf.gap_px >= 0) {
+            rs.computed.row_gap    = static_cast<std::int16_t>(rf.gap_px);
+            rs.computed.column_gap = static_cast<std::int16_t>(rf.gap_px);
+        }
         if (rf.has_border_color)
             rs.animated.border_rgba = rf.border_rgba;
     }
