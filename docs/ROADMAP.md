@@ -84,9 +84,16 @@ loops, not the other way around.
       face, bold from .ttc face index, synthetic medium for weight
       500 via double-draw (matches Chrome/Safari fake-bold
       behavior when no Medium variant is installed).
-- [ ] `<style>` shorthand expansion the demo had to work around
-      (`background:`, `font:`, `padding:`/`margin:` shorthands
-      beyond what lexbor expands for us)
+- [x] `background:` shorthand recovery via the gap-fill scanner
+      (lexbor exposes only `background-color` longhand). `border-color`
+      / `border-radius` / `gap` already landed earlier in the same
+      pass. Color portion only — image / position / size still TBD
+      when those paint features land.
+- [ ] `font:` shorthand recovery and `font-family` / `font-style` /
+      `line-height` longhand cascade arms (lexbor parses these; we
+      just don't read them yet)
+- [ ] Per-corner `border-radius: TL TR BR BL` and `border-radius:
+      H / V` (currently uniform single value)
 - [x] Synthetic line-box wrapper so multiple inline / inline-block
       siblings share a row (collect_blocks tracks an open run; the
       first inline child opens a flex-row-wrap synthetic Block;
