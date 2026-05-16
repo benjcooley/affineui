@@ -71,15 +71,19 @@ loops, not the other way around.
       clip intersection (NanoVG's scissor replaces rather than
       intersects today)
 - [ ] Keyboard routing for focused inputs (`on_key_press`, IME stub)
-- [x] `examples/01_bootstrap` — Bootstrap-flavored page exercises
-      the cascade against real-world patterns. Surfaced bugs got
-      fixed inline: CSS cascade ordering (lexbor's weak walk
-      inverted specificity), missing body bg pre-pass, page-padding
-      driven by body CSS not a hardcoded constant, width/height
-      standalone parsing, gap-fill scanner for border-radius /
-      border-color / gap from CSS rule blocks (lexbor 2.4 silently
-      drops them), inline-block sizing for `<button>`, text measure
-      ceil to avoid invisible word wrap.
+- [x] `examples/01_bootstrap` — Bootstrap-flavored page renders
+      pixel-close to the browser reference. Surfaced bugs got fixed
+      inline along the way: CSS cascade ordering (lexbor's weak
+      walk inverted specificity), missing body bg pre-pass, page-
+      padding driven by body CSS not a hardcoded constant,
+      width/height standalone parsing, gap-fill scanner for
+      border-radius / border-color / gap from CSS rule blocks
+      (lexbor 2.4 silently drops them), inline-block sizing for
+      `<button>`, text measure ceil to avoid invisible word wrap,
+      font-weight cascade arm, SF Pro as default `-apple-system`
+      face, bold from .ttc face index, synthetic medium for weight
+      500 via double-draw (matches Chrome/Safari fake-bold
+      behavior when no Medium variant is installed).
 - [ ] `<style>` shorthand expansion the demo had to work around
       (`background:`, `font:`, `padding:`/`margin:` shorthands
       beyond what lexbor expands for us)
