@@ -116,11 +116,17 @@ public:
         // reconstitute it without another lookup.
         //
         // Weight selection: NanoVG has no "synthetic bold" — every
-        // weight is its own face. CSS weights >= 600 (semi-bold and
-        // above) pick a registered "<family>-bold" face if available;
-        // anything lighter falls through to the regular face.
+        // weight is its own face. The CSS spec says weight 500 falls
+        // back to Regular when no Medium face is available, but in
+        // practice systems ship Regular + Bold only, and the visual
+        // result of using Regular for 500 is "too light." We promote
+        // anything >= 500 to bold; slightly over-bolds true medium
+        // text, but matches what readers expect from a browser that
+        // *does* have a Medium variant installed. Phase 4 polish: load
+        // an actual Medium face from .ttc collections (Helvetica Neue
+        // on macOS, etc.) and use a three-tier ladder.
         const std::string family_str(family);
-        const bool        prefer_bold = weight >= 600;
+        const bool        prefer_bold = weight >= 500;
 
         int face = -1;
         if (prefer_bold) {
@@ -297,63 +303,74 @@ std::uint32_t register_font_file(NVGcontext* vg, const char* family, const char*
 }
 
 std::string_view register_default_font(NVGcontext* vg) {
-    // Try a list of platform-typical sans-serif files. First match wins.
-    // Registered under "sans" *and* the embedder-friendly aliases.
-    static constexpr const char* kCandidates[] = {
+    // A font-file candidate. `index` > 0 selects a specific face from
+    // a .ttc/.otc font collection (macOS Helvetica.ttc bundles
+    // Regular + Bold + Light + obliques as faces 0..5; HelveticaNeue
+    // is the same shape). Index 0 == default load via nvgCreateFont.
+    struct FontCandidate { const char* path; int index; };
+
+    static constexpr FontCandidate kCandidates[] = {
 #if defined(__APPLE__)
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "/System/Library/Fonts/SFNS.ttf",
+        // SFNS is the modern macOS UI font — what `-apple-system`
+        // resolves to in a browser. Stroke weight and metrics
+        // visibly differ from Helvetica, so prefer it when present.
+        {"/System/Library/Fonts/SFNS.ttf",                       0},
+        {"/System/Library/Fonts/SFCompact.ttf",                  0},
+        {"/System/Library/Fonts/HelveticaNeue.ttc",              0},
+        {"/System/Library/Fonts/Helvetica.ttc",                  0},
+        {"/System/Library/Fonts/Supplemental/Arial.ttf",         0},
+        {"/Library/Fonts/Arial.ttf",                             0},
 #elif defined(__linux__)
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",       0},
+        {"/usr/share/fonts/TTF/DejaVuSans.ttf",                   0},
+        {"/usr/share/fonts/liberation/LiberationSans-Regular.ttf", 0},
+        {"/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 0},
+        {"/usr/share/fonts/noto/NotoSans-Regular.ttf",            0},
 #elif defined(_WIN32)
-        "C:/Windows/Fonts/segoeui.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-        "C:/Windows/Fonts/calibri.ttf",
+        {"C:/Windows/Fonts/segoeui.ttf",                          0},
+        {"C:/Windows/Fonts/arial.ttf",                            0},
+        {"C:/Windows/Fonts/calibri.ttf",                          0},
 #endif
     };
-    static constexpr const char* kBoldCandidates[] = {
+    static constexpr FontCandidate kBoldCandidates[] = {
 #if defined(__APPLE__)
-        // Helvetica.ttc on macOS is a font collection — face index 1
-        // is typically the bold face. We currently rely on a separate
-        // bold TTF being available instead (more deterministic). If
-        // none are present the regular face is reused.
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "/System/Library/Fonts/HelveticaNeueBd.ttc",
-        "/System/Library/Fonts/SFNSBold.ttf",
-        "/System/Library/Fonts/SFNS-Bold.ttf",
+        // HelveticaNeue.ttc face index 1 is the Bold face on macOS;
+        // same for Helvetica.ttc. Try them before the standalone TTFs
+        // so the bold matches the regular family.
+        {"/System/Library/Fonts/HelveticaNeue.ttc",              1},
+        {"/System/Library/Fonts/Helvetica.ttc",                  1},
+        {"/System/Library/Fonts/Supplemental/Arial Bold.ttf",    0},
+        {"/Library/Fonts/Arial Bold.ttf",                        0},
 #elif defined(__linux__)
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/noto/NotoSans-Bold.ttf",
+        {"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  0},
+        {"/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",              0},
+        {"/usr/share/fonts/liberation/LiberationSans-Bold.ttf",   0},
+        {"/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0},
+        {"/usr/share/fonts/noto/NotoSans-Bold.ttf",               0},
 #elif defined(_WIN32)
-        "C:/Windows/Fonts/segoeuib.ttf",
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/calibrib.ttf",
+        {"C:/Windows/Fonts/segoeuib.ttf",                         0},
+        {"C:/Windows/Fonts/arialbd.ttf",                          0},
+        {"C:/Windows/Fonts/calibrib.ttf",                         0},
 #endif
+    };
+    auto load_one = [&](const char* name, FontCandidate c) {
+        return (c.index == 0)
+            ? nvgCreateFont       (vg, name, c.path)
+            : nvgCreateFontAtIndex(vg, name, c.path, c.index);
     };
     std::string_view registered_regular;
-    for (const char* path : kCandidates) {
-        if (nvgCreateFont(vg, "sans", path) >= 0) {
-            nvgCreateFont(vg, "sans-serif", path);
+    for (FontCandidate c : kCandidates) {
+        if (load_one("sans", c) >= 0) {
+            load_one("sans-serif", c);
             registered_regular = "sans";
             break;
         }
     }
-    // Bold is best-effort. If no bold TTF is on the system, weight >=
-    // 600 falls back to the regular face (mildly worse than browser
-    // behavior, but no synthetic-bold path exists in NanoVG).
-    for (const char* path : kBoldCandidates) {
-        if (nvgCreateFont(vg, "sans-bold", path) >= 0) {
-            nvgCreateFont(vg, "sans-serif-bold", path);
+    // Bold is best-effort. If no bold face is on the system, the
+    // weight cascade falls back to the regular face for >= 500.
+    for (FontCandidate c : kBoldCandidates) {
+        if (load_one("sans-bold", c) >= 0) {
+            load_one("sans-serif-bold", c);
             break;
         }
     }
