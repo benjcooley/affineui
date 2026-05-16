@@ -55,9 +55,14 @@ loops, not the other way around.
 - [x] `:active` (mouse-down state) — same overlay machinery as
       :hover, separate state bit + chain. MouseDown sets, MouseUp
       clears, restyle fires per affected element.
-- [ ] `:hover` / `:active` widened to multi-simple compounds and
-      descendant combinators via `lxb_selectors_find` with a state-
-      aware match callback
+- [x] `:hover` / `:active` widened to multi-simple compounds
+      (`.card.clickable:hover`) and descendant combinators
+      (`.clickable h1:hover`). Scanner builds CompoundSelector
+      chains; matcher does greedy ancestor walk through Block
+      parent_idx for descendant combinator semantics.
+- [ ] `:hover` / `:active` widened further to `>`, `+`, `~`,
+      attribute selectors, and functional pseudos via
+      `lxb_selectors_find` with a state-aware match callback
 - [ ] Scroll (wheel + drag) on `overflow: auto|scroll` containers
 - [ ] Keyboard routing for focused inputs (`on_key_press`, IME stub)
 - [ ] Inline-style scan for properties lexbor 2.4 doesn't expose
