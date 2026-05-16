@@ -115,7 +115,15 @@ private:
     std::function<void()> view_fn_;
     bool                  dirty_{true};
 
+    // Set-until-mismatch reconciler state. For each ancestor in
+    // parent_stack_ we keep a cursor pointing at the next sibling we
+    // expect to match against the next open_element / text call. A
+    // match (same id-via-scope-hash, same tag, or same node type for
+    // text) reuses the existing node and advances the cursor. A
+    // mismatch destroys the cursor and everything after it in this
+    // parent's child list, then inserts a fresh node.
     std::vector<lxb_dom_node_t*> parent_stack_;
+    std::vector<lxb_dom_node_t*> cursor_stack_;
 
     // Keyed by call-site hash; survives re-renders.
     std::unordered_map<std::uint64_t, ImmStateSlot> state_slots_;

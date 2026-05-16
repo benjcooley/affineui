@@ -880,12 +880,6 @@ int scan_inline_px_property(lxb_dom_element_t* elem,
     return any ? value : -1;
 }
 
-// True if the inline style declares display:flex. Lexbor's cascade
-// walk does pick up inline `style="display: flex"`, but this is a
-// useful escape hatch for inline-only demos.
-inline int parse_border_radius_inline(lxb_dom_element_t* elem) {
-    return scan_inline_px_property(elem, "border-radius");
-}
 inline int parse_gap_inline(lxb_dom_element_t* elem) {
     return scan_inline_px_property(elem, "gap");
 }
