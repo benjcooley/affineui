@@ -131,11 +131,13 @@ mutation. Public surface (`mount`, `use_state`, `on_click`,
 - [x] Clear-and-rebuild reset path (nulls `doc->ev_remove` /
       `ev_destroy` to dodge lexbor's broken cascade-tear-down on
       cascade-attached subtrees; see *Known issues* below)
-- [ ] Dumb-reconcile upgrade: set-until-mismatch traversal, only
-      rebuild the subtree below a fatal diff. Same public surface,
-      different body. Drops the destroy walk and the orphaned style
-      entries it leaves behind, and lets state slot mapping stay tied
-      to the same DOM nodes across renders.
+- [x] Dumb-reconcile (set-until-mismatch). ImmRuntime walks a
+      cursor stack alongside the parent stack; matching elements
+      (same tag + `aui-imm-{hash}` id) reuse in place, mismatches
+      destroy the tail and rebuild. Text-only changes update node
+      content with no DOM churn. State slots stay tied to stable
+      DOM nodes across renders — same public surface as Phase 2D
+      clear-and-rebuild, entirely different body.
 - [ ] Virtual-DOM data structures (only needed if we promote past
       dumb-reconcile to keyed-list reconciliation)
 - [ ] `on_change` / `on_input` handlers (today they're stubs)
