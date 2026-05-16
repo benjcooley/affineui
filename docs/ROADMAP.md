@@ -87,9 +87,10 @@ loops, not the other way around.
 - [ ] `<style>` shorthand expansion the demo had to work around
       (`background:`, `font:`, `padding:`/`margin:` shorthands
       beyond what lexbor expands for us)
-- [ ] Synthetic line-box wrapper so multiple inline / inline-block
-      siblings share a row instead of stacking (today's gap when
-      Save + Cancel buttons live next to each other)
+- [x] Synthetic line-box wrapper so multiple inline / inline-block
+      siblings share a row (collect_blocks tracks an open run; the
+      first inline child opens a flex-row-wrap synthetic Block;
+      next block-level sibling closes it; paint skips the wrapper).
 
 ## Phase 3 — Imm-mode layer ⏳
 
