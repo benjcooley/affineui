@@ -116,17 +116,15 @@ public:
         // reconstitute it without another lookup.
         //
         // Weight selection: NanoVG has no "synthetic bold" — every
-        // weight is its own face. The CSS spec says weight 500 falls
-        // back to Regular when no Medium face is available, but in
-        // practice systems ship Regular + Bold only, and the visual
-        // result of using Regular for 500 is "too light." We promote
-        // anything >= 500 to bold; slightly over-bolds true medium
-        // text, but matches what readers expect from a browser that
-        // *does* have a Medium variant installed. Phase 4 polish: load
-        // an actual Medium face from .ttc collections (Helvetica Neue
-        // on macOS, etc.) and use a three-tier ladder.
+        // weight is its own face. The CSS spec says weight 500
+        // falls back to Regular when no Medium face is available.
+        // SF Pro (the macOS regular face) has a heavier stroke than
+        // Helvetica did, so treating 500 as Regular now reads close
+        // to a browser's Medium fallback. Anything >= 600 picks the
+        // bold face. Phase 4 polish: load a real Medium via the
+        // variable-font weight axis on SFNS.ttf for proper 500.
         const std::string family_str(family);
-        const bool        prefer_bold = weight >= 500;
+        const bool        prefer_bold = weight >= 600;
 
         int face = -1;
         if (prefer_bold) {
