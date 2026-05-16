@@ -1,0 +1,315 @@
+cmake_minimum_required(VERSION 3.20)
+
+# ─── Project ─────────────────────────────────────────────────────────────────
+project(affineui
+    VERSION 0.0.1
+    DESCRIPTION "Tiny GPU-accelerated HTML5/CSS UI renderer for C++"
+    LANGUAGES C CXX
+)
+# sokol_app's macOS implementation is Objective-C (AppKit/Foundation).
+# Enable OBJC only on Apple platforms so set_source_files_properties(LANGUAGE OBJC)
+# in cmake/Dependencies.cmake takes effect there.
+if(APPLE)
+    enable_language(OBJC)
+endif()
+
+# Detect top-level invocation (so subprojects don't get our examples/tests)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(AFFINEUI_IS_TOPLEVEL ON)
+else()
+    set(AFFINEUI_IS_TOPLEVEL OFF)
+endif()
+
+# ─── Options ─────────────────────────────────────────────────────────────────
+option(AFFINEUI_BUILD_EXAMPLES  "Build examples"               ${AFFINEUI_IS_TOPLEVEL})
+option(AFFINEUI_BUILD_TESTS     "Build tests"                  ${AFFINEUI_IS_TOPLEVEL})
+option(AFFINEUI_BUILD_TOOLS     "Build tools"                  ${AFFINEUI_IS_TOPLEVEL})
+option(AFFINEUI_BUILD_SHARED    "Build as shared library"      OFF)
+option(AFFINEUI_ENABLE_IMM      "Enable immediate-mode layer"  ON)
+option(AFFINEUI_ENABLE_C_API    "Build the extern \"C\" surface" ON)
+option(AFFINEUI_WARNINGS_AS_ERRORS "Treat warnings as errors"  OFF)
+set(AFFINEUI_BACKEND "auto" CACHE STRING "GPU backend: auto|metal|d3d11|gl|wgpu")
+
+# ── "Bring your own" options for hosts that already vendor these deps ────────
+# When ON: AffineUI does NOT compile the dep's implementation TU, does NOT
+# define its IMPL macro, and skips its CMake subproject if applicable. The
+# host is responsible for providing the symbols. Header include paths must
+# still resolve (typically via the host's own target_include_directories).
+option(AFFINEUI_HOST_PROVIDES_SOKOL        "Host already implements sokol_*"     OFF)
+option(AFFINEUI_HOST_PROVIDES_NANOVG       "Host already implements NanoVG"      OFF)
+option(AFFINEUI_HOST_PROVIDES_STB_IMAGE    "Host already implements stb_image"   OFF)
+option(AFFINEUI_HOST_PROVIDES_STB_TRUETYPE "Host already implements stb_truetype" OFF)
+option(AFFINEUI_HOST_PROVIDES_FONTSTASH    "Host already implements fontstash"   OFF)
+option(AFFINEUI_HOST_PROVIDES_LEXBOR       "Host already builds lexbor"          OFF)
+option(AFFINEUI_HOST_PROVIDES_YOGA         "Host already builds Yoga"            OFF)
+
+# ─── Defaults ────────────────────────────────────────────────────────────────
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        Debug Release MinSizeRel RelWithDebInfo)
+endif()
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# ─── Helper modules ──────────────────────────────────────────────────────────
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(CompilerWarnings)
+include(BackendDetect)
+include(Dependencies)
+
+# ─── Resolve backend ─────────────────────────────────────────────────────────
+affineui_detect_backend(AFFINEUI_BACKEND_RESOLVED ${AFFINEUI_BACKEND})
+message(STATUS "AffineUI backend: ${AFFINEUI_BACKEND_RESOLVED}")
+
+# ─── Resolve vendored deps (gracefully no-ops when external/ is empty) ───────
+affineui_check_vendored_deps(AFFINEUI_DEPS_AVAILABLE)
+if(NOT AFFINEUI_DEPS_AVAILABLE)
+    message(WARNING
+        "Vendored dependencies not present under external/. The library will "
+        "build a stub (compile-only) so CMake still configures and tests can "
+        "run. Run ./scripts/fetch_deps.sh to enable real rendering.")
+endif()
+
+# ─── Library target ──────────────────────────────────────────────────────────
+if(AFFINEUI_BUILD_SHARED)
+    add_library(affineui SHARED)
+else()
+    add_library(affineui STATIC)
+endif()
+add_library(affineui::affineui ALIAS affineui)
+
+target_sources(affineui PRIVATE
+    src/affineui.cpp
+    src/ui.cpp
+    src/themes.cpp
+    src/app/app.cpp
+    src/app/event.cpp
+    src/dom/document.cpp
+    src/dom/dom_view.cpp
+    src/style/cascade.cpp
+    src/style/computed.cpp
+    src/style/selector_bridge.cpp
+    src/style/style_store.cpp
+    src/style/units.cpp
+    src/layout/box.cpp
+    src/layout/block.cpp
+    src/layout/inline.cpp
+    src/layout/flex.cpp
+    src/layout/yoga_adapter.cpp
+    src/text/shaper.cpp
+    src/text/line_breaker.cpp
+    src/text/font_manager.cpp
+    src/paint/paint_driver.cpp
+    src/paint/image_loader.cpp
+    src/paint/layer.cpp
+    src/paint/composite.cpp
+
+    # Renderer — graphics-only, windowing-toolkit-independent. App
+    # delegates frame rendering to this; future SDL/glfw adapters use
+    # the same Renderer through the same public interface.
+    src/render/renderer.cpp
+
+    # Engine facade + foundational data structures (5-stage pipeline)
+    src/engine/box.cpp
+    src/engine/layer.cpp
+    src/engine/display_list.cpp
+    src/engine/restyle_queue.cpp
+    src/engine/animation.cpp
+    src/engine/style_engine.cpp
+    src/engine/layout_engine.cpp
+    src/engine/paint_engine.cpp
+    src/engine/rasterizer.cpp
+    src/engine/compositor.cpp
+    src/engine/engine.cpp
+)
+
+if(AFFINEUI_DEPS_AVAILABLE)
+    target_sources(affineui PRIVATE
+        src/dom/lexbor_bridge.cpp
+        src/paint/nanovg_painter.cpp
+        src/paint/nanovg_sokol.c
+        src/paint/nanovg_impl.c
+        src/paint/sokol_impl.c
+        src/text/fontstash_impl.c
+        src/text/stb_impl.c
+    )
+endif()
+
+if(AFFINEUI_ENABLE_IMM)
+    target_sources(affineui PRIVATE
+        src/imm/imm.cpp
+        src/imm/imm_runtime.cpp
+        src/imm/reconciler.cpp
+        src/imm/state_store.cpp
+    )
+endif()
+
+if(AFFINEUI_ENABLE_C_API)
+    target_sources(affineui PRIVATE src/c_api.cpp)
+endif()
+
+target_include_directories(affineui
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_definitions(affineui
+    PUBLIC
+        AFFINEUI_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+        AFFINEUI_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+        AFFINEUI_VERSION_PATCH=${PROJECT_VERSION_PATCH}
+    PRIVATE
+        $<$<NOT:$<BOOL:${AFFINEUI_ENABLE_IMM}>>:AFFINEUI_NO_IMM>
+        $<$<NOT:$<BOOL:${AFFINEUI_ENABLE_C_API}>>:AFFINEUI_NO_C_API>
+        $<$<NOT:$<BOOL:${AFFINEUI_DEPS_AVAILABLE}>>:AFFINEUI_STUB_BUILD>
+)
+
+affineui_set_warnings(affineui ${AFFINEUI_WARNINGS_AS_ERRORS})
+affineui_link_backend(affineui ${AFFINEUI_BACKEND_RESOLVED})
+
+if(AFFINEUI_DEPS_AVAILABLE)
+    affineui_link_vendored_deps(affineui)
+endif()
+
+# Platform link libs that sokol_app + NanoVG (GL backend) need.
+# Frameworks/libs are picked to match the resolved backend.
+if(APPLE)
+    target_link_libraries(affineui PUBLIC
+        "-framework Cocoa"
+        "-framework QuartzCore"
+        "-framework AudioToolbox"
+    )
+    if(AFFINEUI_BACKEND_RESOLVED STREQUAL "gl")
+        target_link_libraries(affineui PUBLIC "-framework OpenGL")
+    elseif(AFFINEUI_BACKEND_RESOLVED STREQUAL "metal")
+        target_link_libraries(affineui PUBLIC
+            "-framework Metal" "-framework MetalKit")
+    endif()
+elseif(UNIX)
+    find_package(X11 REQUIRED)
+    target_link_libraries(affineui PUBLIC
+        ${X11_LIBRARIES} ${X11_Xi_LIB} ${X11_Xcursor_LIB}
+        GL dl m pthread
+    )
+elseif(WIN32)
+    target_link_libraries(affineui PUBLIC user32 gdi32 ole32 shell32)
+    if(AFFINEUI_BACKEND_RESOLVED STREQUAL "gl")
+        target_link_libraries(affineui PUBLIC opengl32)
+    elseif(AFFINEUI_BACKEND_RESOLVED STREQUAL "d3d11")
+        target_link_libraries(affineui PUBLIC d3d11 dxgi)
+    endif()
+endif()
+
+# ─── Adapter interface targets ───────────────────────────────────────────────
+# Adapters are opt-in — link the one matching your windowing toolkit.
+# Each target adds the corresponding header path + defines the
+# AFFINEUI_WITH_* macro the umbrella header looks for.
+#
+#   target_link_libraries(my_game PRIVATE affineui::sokol)
+#   target_link_libraries(my_game PRIVATE affineui::sdl)    # Phase D
+#
+# sokol_app's implementation is already built into libaffineui (so
+# both the core library and your game see the same sokol symbols).
+add_library(affineui_sokol INTERFACE)
+add_library(affineui::sokol ALIAS affineui_sokol)
+target_link_libraries(affineui_sokol INTERFACE affineui::affineui)
+target_compile_definitions(affineui_sokol INTERFACE AFFINEUI_WITH_SOKOL)
+target_include_directories(affineui_sokol SYSTEM INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/external/sokol>)
+
+# SDL2 adapter — only available when SDL2 is found on the host. Games
+# using SDL2 link against affineui::sdl which transitively gives them
+# the AFFINEUI_WITH_SDL macro + SDL2 link deps. Falls back gracefully
+# when SDL2 isn't installed (the target just isn't created — examples
+# that depend on it get skipped).
+find_package(SDL2 QUIET CONFIG)
+if(NOT SDL2_FOUND)
+    find_package(SDL2 QUIET)
+endif()
+if(SDL2_FOUND)
+    add_library(affineui_sdl INTERFACE)
+    add_library(affineui::sdl ALIAS affineui_sdl)
+    target_link_libraries(affineui_sdl INTERFACE affineui::affineui)
+    target_compile_definitions(affineui_sdl INTERFACE AFFINEUI_WITH_SDL)
+    # SDL2::SDL2 (from CONFIG) or SDL2_LIBRARIES (from FindSDL2):
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(affineui_sdl INTERFACE SDL2::SDL2)
+    else()
+        target_link_libraries(affineui_sdl INTERFACE ${SDL2_LIBRARIES})
+        target_include_directories(affineui_sdl SYSTEM INTERFACE ${SDL2_INCLUDE_DIRS})
+    endif()
+    set(AFFINEUI_HAVE_SDL2 ON)
+    message(STATUS "AffineUI: SDL2 adapter enabled (SDL2 ${SDL2_VERSION})")
+else()
+    set(AFFINEUI_HAVE_SDL2 OFF)
+    message(STATUS "AffineUI: SDL2 not found, affineui::sdl target unavailable")
+endif()
+
+# ─── Subdirectories ──────────────────────────────────────────────────────────
+if(AFFINEUI_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+if(AFFINEUI_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+if(AFFINEUI_BUILD_TOOLS)
+    add_subdirectory(tools)
+endif()
+
+# ─── Install / package config ────────────────────────────────────────────────
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS affineui
+    EXPORT affineuiTargets
+    LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(EXPORT affineuiTargets
+    FILE affineuiTargets.cmake
+    NAMESPACE affineui::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/affineui
+)
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/affineuiConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/affineuiConfig.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/affineui
+)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/affineuiConfigVersion.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMinorVersion
+)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/affineuiConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/affineuiConfigVersion.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/affineui
+)
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+message(STATUS "")
+message(STATUS "AffineUI ${PROJECT_VERSION}")
+message(STATUS "  Backend:        ${AFFINEUI_BACKEND_RESOLVED}")
+message(STATUS "  Deps fetched:   ${AFFINEUI_DEPS_AVAILABLE}")
+message(STATUS "  Imm mode:       ${AFFINEUI_ENABLE_IMM}")
+message(STATUS "  C ABI:          ${AFFINEUI_ENABLE_C_API}")
+message(STATUS "  Examples:       ${AFFINEUI_BUILD_EXAMPLES}")
+message(STATUS "  Tests:          ${AFFINEUI_BUILD_TESTS}")
+message(STATUS "  Tools:          ${AFFINEUI_BUILD_TOOLS}")
+message(STATUS "  Shared:         ${AFFINEUI_BUILD_SHARED}")
+message(STATUS "")

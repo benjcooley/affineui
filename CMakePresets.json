@@ -1,0 +1,74 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": { "major": 3, "minor": 23, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "inherits": "base",
+      "displayName": "Dev (Debug, sanitizers, -Werror)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AFFINEUI_WARNINGS_AS_ERRORS": "ON",
+        "CMAKE_CXX_FLAGS_INIT": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_C_FLAGS_INIT":   "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS_INIT": "-fsanitize=address,undefined"
+      },
+      "condition": {
+        "type": "notEquals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "minsize",
+      "inherits": "base",
+      "displayName": "Minimum-size release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "AFFINEUI_BUILD_EXAMPLES": "OFF",
+        "AFFINEUI_BUILD_TESTS": "OFF",
+        "AFFINEUI_BUILD_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "msvc",
+      "inherits": "base",
+      "displayName": "MSVC (Windows)",
+      "generator": "Visual Studio 17 2022",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev",     "configurePreset": "dev" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "minsize", "configurePreset": "minsize" }
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": { "outputOnFailure": true },
+      "execution": { "stopOnFailure": false }
+    }
+  ]
+}
