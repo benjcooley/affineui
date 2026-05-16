@@ -63,7 +63,13 @@ loops, not the other way around.
 - [ ] `:hover` / `:active` widened further to `>`, `+`, `~`,
       attribute selectors, and functional pseudos via
       `lxb_selectors_find` with a state-aware match callback
-- [ ] Scroll (wheel + drag) on `overflow: auto|scroll` containers
+- [x] Vertical wheel scroll on `overflow-y: auto|scroll` containers
+      — block tracks scroll_y + content_h, paint clips to container
+      bounds and offsets child draws, hit-test sees the same
+      effective bounds, simple thumb indicator on the right edge.
+- [ ] Horizontal scroll, scrollbar drag, nested-scroll-container
+      clip intersection (NanoVG's scissor replaces rather than
+      intersects today)
 - [ ] Keyboard routing for focused inputs (`on_key_press`, IME stub)
 - [ ] Inline-style scan for properties lexbor 2.4 doesn't expose
       (`border-radius`, `gap`, `cursor`, `background:` shorthand)
