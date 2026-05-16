@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>AffineUI — imm todo reference</title>
+<style>
+  /* Mirrors the CSS string in examples/05_imm_todo/main.cpp.
+     Open this in a browser side-by-side with
+     ./build/examples/imm_todo/imm_todo. */
+
+  body { font-family: -apple-system, system-ui, sans-serif;
+         background-color: #f8f9fa; color: #212529;
+         padding: 32px; margin: 0; }
+  h1   { font-size: 28px; font-weight: 600;
+         margin: 0 0 16px 0; }
+  .card { background-color: #ffffff;
+          border: 1px solid #dee2e6;
+          border-radius: 8px;
+          padding: 16px 20px;
+          margin: 0 0 16px 0; }
+  .toolbar { margin-bottom: 16px; }
+  .toolbar .btn { margin-right: 8px; }
+  .btn { display: inline-block;
+         padding: 6px 14px;
+         border-radius: 6px;
+         border: 1px solid #0d6efd;
+         background-color: #0d6efd;
+         color: #ffffff;
+         font-size: 14px;
+         cursor: pointer; }
+  .btn:hover  { background-color: #0b5ed7; }
+  .btn:active { background-color: #0a58ca; }
+  .btn-ghost { background-color: #ffffff; color: #0d6efd; }
+  .btn-ghost:hover  { background-color: #e7f1ff; }
+  .btn-ghost:active { background-color: #cfe2ff; }
+
+  .item       { padding: 6px 0; }
+  .item-text  { font-size: 16px; color: #212529; margin-left: 8px; }
+  .done .item-text { color: #6c757d; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Todos</h1>
+
+    <div class="toolbar">
+      <button class="btn" id="add">Add Task 4</button>
+      <button class="btn" id="pop">Pop</button>
+    </div>
+
+    <div id="list"></div>
+  </div>
+
+<script>
+  const items = [
+    {text: "Read the dumb-reconcile commit", done: false},
+    {text: "Add a todo demo",                done: true},
+    {text: "Wire keyboard for inputs",       done: false},
+  ];
+
+  function render() {
+    const list = document.getElementById('list');
+    list.innerHTML = '';
+    items.forEach((it, i) => {
+      const row = document.createElement('div');
+      row.className = it.done ? 'item done' : 'item';
+      const toggle = document.createElement('button');
+      toggle.className = 'btn';
+      toggle.textContent = it.done ? '[x]' : '[ ]';
+      toggle.addEventListener('click', () => {
+        items[i].done = !items[i].done;
+        render();
+      });
+      const label = document.createElement('span');
+      label.className = 'item-text';
+      label.textContent = it.text;
+      row.appendChild(toggle);
+      row.appendChild(label);
+      list.appendChild(row);
+    });
+    document.getElementById('add').textContent = 'Add Task ' + (items.length + 1);
+  }
+
+  document.getElementById('add').addEventListener('click', () => {
+    const n = items.length + 1;
+    items.push({text: 'Task ' + n, done: false});
+    render();
+  });
+  document.getElementById('pop').addEventListener('click', () => {
+    items.pop();
+    render();
+  });
+
+  render();
+</script>
+</body>
+</html>

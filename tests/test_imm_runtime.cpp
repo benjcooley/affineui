@@ -67,7 +67,7 @@ TEST_CASE("imm clear-and-rebuild survives repeated css-backed dom replacement") 
             auto count = ui::use_state(0, state_site);
             rendered_count = count.get();
             ui::p("", ui::CallSite{"imm-runtime-test", 9, 2}).text(std::to_string(count.get()));
-            ui::button("Increment", button_site).on_click([count]() mutable {
+            ui::button("Increment", "", button_site).on_click([count]() mutable {
                 count = count.get() + 1;
             });
         }
@@ -106,7 +106,7 @@ TEST_CASE("imm counter works through layout hit testing and Ui dispatch") {
             rendered_count = count.get();
             ui::h1("", ui::CallSite{"imm-ui-test", 3, 1}).text("Counter");
             ui::p("", ui::CallSite{"imm-ui-test", 4, 1}).text(std::to_string(count.get()));
-            ui::button("Increment", ui::CallSite{"imm-ui-test", 5, 1}).on_click([count]() mutable {
+            ui::button("Increment", "", ui::CallSite{"imm-ui-test", 5, 1}).on_click([count]() mutable {
                 count = count.get() + 1;
             });
         }

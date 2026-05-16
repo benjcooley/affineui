@@ -10,7 +10,9 @@
 #include "affineui/imm.h"
 #include "imm/imm_runtime.h"
 
+#include <cstdint>
 #include <utility>
+#include <vector>
 
 namespace affineui::imm {
 
@@ -21,6 +23,22 @@ namespace {
 
 ImmRuntime* rt() { return imm_active_runtime(); }
 
+// Pending per-call key set by imm::key(v); consumed by the next
+// open_tag. Combined with the inherited-key chain so all descendants
+// of a keyed element automatically pick up the key without the user
+// having to re-call imm::key inside each child.
+thread_local std::uint64_t g_pending_key{0};
+thread_local bool          g_has_pending_key{false};
+
+// Cumulative XOR of keys from the chain of currently-open ancestors.
+// Pushed by open_tag, popped by Scope's dtor / move. Empty stack
+// implies an inherited key of 0 (no keying).
+thread_local std::vector<std::uint64_t> g_inherited_key_stack;
+
+std::uint64_t current_inherited_key() {
+    return g_inherited_key_stack.empty() ? 0 : g_inherited_key_stack.back();
+}
+
 // Open a tag and return a constructed Scope. The Scope is always
 // "active" (truthy) so the `if (auto s = imm::div(...))` idiom works
 // even outside a view-fn run — useful for tests + driverless static
@@ -29,7 +47,15 @@ ImmRuntime* rt() { return imm_active_runtime(); }
 Scope open_tag(std::string_view tag,
                std::string_view classes,
                CallSite here) {
-    const auto hash = here.hash();
+    // Fold the pending key (from imm::key) into the inherited chain
+    // for THIS element and all of its descendants.
+    std::uint64_t inherited = current_inherited_key();
+    if (g_has_pending_key) {
+        inherited ^= g_pending_key;
+        g_pending_key = 0;
+        g_has_pending_key = false;
+    }
+    const std::uint64_t hash = here.hash() ^ inherited;
     if (auto* r = rt()) {
         // Pass class through so the runtime can set it BEFORE insert.
         // Lexbor's cascade runs in the ev_insert hook against whatever
@@ -37,10 +63,16 @@ Scope open_tag(std::string_view tag,
         // afterwards would miss `.cls` selector matches.
         r->open_element(tag, hash, classes);
     }
+    g_inherited_key_stack.push_back(inherited);
     return Scope{hash};
 }
 
 }  // namespace
+
+void key(std::uint64_t value) {
+    g_pending_key = value;
+    g_has_pending_key = true;
+}
 
 void invalidate() {
     if (auto* r = rt()) r->mark_dirty();
@@ -58,6 +90,7 @@ Scope::Scope(std::uint64_t node_id) noexcept
 
 Scope::~Scope() {
     if (!active_) return;
+    if (!g_inherited_key_stack.empty()) g_inherited_key_stack.pop_back();
     if (auto* r = rt()) r->close_element();
 }
 
@@ -66,7 +99,10 @@ Scope::Scope(Scope&& o) noexcept : node_id_{o.node_id_}, active_{o.active_} {
 }
 Scope& Scope::operator=(Scope&& o) noexcept {
     if (this != &o) {
-        if (active_) { if (auto* r = rt()) r->close_element(); }
+        if (active_) {
+            if (!g_inherited_key_stack.empty()) g_inherited_key_stack.pop_back();
+            if (auto* r = rt()) r->close_element();
+        }
         node_id_  = o.node_id_;
         active_   = o.active_;
         o.active_ = false;
@@ -131,8 +167,8 @@ void text(std::string_view t, CallSite /*here*/) {
 
 void raw_html(std::string_view, CallSite) {}     // Phase 3 — needs lexbor parse
 
-Scope button  (std::string_view label, CallSite h) {
-    auto s = open_tag("button", {}, h);
+Scope button  (std::string_view label, std::string_view classes, CallSite h) {
+    auto s = open_tag("button", classes, h);
     if (s && !label.empty()) {
         if (auto* r = rt()) r->append_text_to_current(label);
     }

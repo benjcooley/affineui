@@ -29,7 +29,13 @@ std::string_view ua_default() {
         "strong,b{font-weight:bold}"
         "em,i{font-style:italic}"
         "ul,ol{padding-left:40px;margin:1em 0}"
+        // Form controls default to inline-block (HTML5 UA stylesheet).
         "button,input,select,textarea{font:inherit;display:inline-block}"
+        // Phrasing elements default to inline so they flow with other
+        // inline siblings via the synthetic line-box wrapper. `a` is
+        // intentionally left out — it's commonly a flex item in
+        // navbars where an explicit inline override clashes.
+        "span,strong,b,em,i,code,kbd,samp{display:inline}"
         "code,pre,kbd,samp{font-family:monospace}";
     return kCss;
 }

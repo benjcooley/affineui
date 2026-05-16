@@ -1915,9 +1915,14 @@ void Document::tick_imm() {
                    /*parent_idx=*/-1);
 
     // 3. Stale-state cleanup. Block indices have churned; hovered_idx
-    //    points into the old vector. Reset; next MouseMove restores
-    //    a correct hover state.
-    impl_->hovered_idx = -1;
+    //    + the cached *_chain vectors all point into the old vector.
+    //    Reset; next MouseMove rebuilds correctly. (Without this, the
+    //    chain held indices that could land on a different block
+    //    after re-collect, leaving rows stuck on hover style.)
+    impl_->hovered_idx   = -1;
+    impl_->active_idx    = -1;
+    impl_->hovered_chain.clear();
+    impl_->active_chain.clear();
     impl_->content_size = Size{0, 0};   // forces relayout in Renderer
 #endif
 }

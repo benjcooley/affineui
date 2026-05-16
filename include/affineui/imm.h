@@ -61,6 +61,20 @@ void invalidate();
 /// the next paint).
 bool is_dirty();
 
+/// Set a key for the NEXT opened element (and its descendants). The
+/// key is XOR-folded into the open_tag's scope-hash so different
+/// iterations of a loop produce different element ids — necessary for
+/// click routing and stable reconciliation when rendering a variable-
+/// length list. The key is consumed by the very next open_tag /
+/// container call; descendants inside that element inherit it
+/// automatically.
+///
+///   for (std::size_t i = 0; i < items.size(); ++i) {
+///       imm::key(i);
+///       if (auto _ = imm::div("row")) { ... }
+///   }
+void key(std::uint64_t value);
+
 // ── Scope (RAII child container) ────────────────────────────────────
 //
 // Returned from container builders (div, button, h1, ...). Implicit
@@ -142,6 +156,7 @@ void raw_html(std::string_view html, CallSite here = AFFINEUI_HERE_DEFAULT_ARG);
 // ── Form widgets ────────────────────────────────────────────────────
 
 Scope button   (std::string_view label = "",
+                std::string_view classes = "",
                 CallSite here = AFFINEUI_HERE_DEFAULT_ARG);
 Scope input    (std::string_view type, std::string_view value,
                 CallSite here = AFFINEUI_HERE_DEFAULT_ARG);
