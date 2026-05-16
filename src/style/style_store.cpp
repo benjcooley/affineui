@@ -30,6 +30,18 @@ ElementId StyleStore::acquire(lxb_dom_element_t* element) {
     return ElementId{index, generations_.back()};
 }
 
+ElementId StyleStore::acquire_synthetic() {
+    const std::uint32_t index = static_cast<std::uint32_t>(computed_.size());
+    computed_.emplace_back();
+    animated_.emplace_back();
+    state_bits_.push_back(0);
+    dirty_.push_back(DirtyStyle | DirtyLayout | DirtyPaint
+                   | DirtyRasterize | DirtyComposite);
+    generations_.push_back(1);
+    // No by_element_ entry — synthetic slots aren't reverse-lookupable.
+    return ElementId{index, 1};
+}
+
 void StyleStore::reset() {
     computed_.clear();
     animated_.clear();

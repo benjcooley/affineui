@@ -70,6 +70,12 @@ struct Block {
     // clears the visible window.
     int               scroll_y{0};
     int               content_h{0};
+    // Synthetic line-box: a Yoga flex-row wrapper inserted by
+    // collect_blocks around runs of inline / inline-block siblings.
+    // No DOM element backs it; paint skips bg/border/text (it's
+    // transparent above its children). Click routing + hit-test
+    // treat it normally — children sit on top anyway.
+    bool              synthetic{false};
 };
 
 #if !defined(AFFINEUI_STUB_BUILD)
@@ -818,6 +824,13 @@ void collect_blocks(detail::DocumentImpl& impl,
                     lxb_dom_node_t* node,
                     const detail::ResolvedStyle& parent_style,
                     int parent_idx) {
+    // Per-recursion-level state: the index of an open synthetic
+    // line-box block wrapping a run of inline / inline-block
+    // siblings. -1 means we're not currently in such a run; the
+    // next inline child opens a fresh line-box, and the next
+    // non-inline child resets back to the actual parent.
+    int open_synth_idx = -1;
+
     for (auto* child = lxb_dom_node_first_child(node); child;
          child = lxb_dom_node_next(child)) {
         if (child->type != LXB_DOM_NODE_TYPE_ELEMENT) continue;
@@ -907,13 +920,44 @@ void collect_blocks(detail::DocumentImpl& impl,
         impl.style_store.dirty(id) &=
             static_cast<std::uint8_t>(~detail::StyleStore::DirtyStyle);
 
+        // Inline-run wrapping. Consecutive inline / inline-block
+        // siblings get a synthetic flex-row-wrap line-box around
+        // them so they flow horizontally instead of stacking. A
+        // block-level sibling breaks the run; the next inline
+        // sibling opens a fresh line-box.
+        using Display = detail::ComputedStyle::Display;
+        const bool child_is_inline =
+            rs.computed.display == Display::Inline ||
+            rs.computed.display == Display::InlineBlock;
+        int effective_parent_idx;
+        if (child_is_inline) {
+            if (open_synth_idx < 0) {
+                const auto sid = impl.style_store.acquire_synthetic();
+                auto& synth_cs = impl.style_store.computed(sid);
+                synth_cs.display        = Display::Flex;
+                synth_cs.flex_direction = detail::ComputedStyle::FlexDirection::Row;
+                synth_cs.flex_wrap      = detail::ComputedStyle::FlexWrap::Wrap;
+                synth_cs.align_items    = detail::ComputedStyle::AlignItems::Center;
+                Block synth;
+                synth.id         = sid;
+                synth.parent_idx = parent_idx;
+                synth.synthetic  = true;
+                impl.blocks.push_back(std::move(synth));
+                open_synth_idx = static_cast<int>(impl.blocks.size()) - 1;
+            }
+            effective_parent_idx = open_synth_idx;
+        } else {
+            open_synth_idx       = -1;
+            effective_parent_idx = parent_idx;
+        }
+
         const int my_idx = static_cast<int>(impl.blocks.size());
         Block b;
         b.id         = id;
         b.tag        = std::move(tag);
         b.elem_id    = attr_string(elem, "id");
         b.classes    = split_classes(attr_string(elem, "class"));
-        b.parent_idx = parent_idx;
+        b.parent_idx = effective_parent_idx;
         impl.blocks.push_back(std::move(b));
 
         // Recurse — children get my_idx as their parent. Track whether
@@ -1181,6 +1225,9 @@ void Document::draw(Painter& painter) {
 
     for (std::size_t i = 0; i < impl_->blocks.size(); ++i) {
         const auto& b  = impl_->blocks[i];
+        // Synthetic line-boxes are layout-only. They don't carry
+        // any visual style — skip the whole draw stanza.
+        if (b.synthetic) continue;
         const auto& cs = impl_->style_store.computed(b.id);
         const auto& an = impl_->style_store.animated(b.id);
 

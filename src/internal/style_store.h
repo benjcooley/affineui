@@ -40,6 +40,12 @@ public:
     /// return the same ID. Marks the slot fully dirty.
     ElementId acquire(lxb_dom_element_t* element);
 
+    /// Allocate a fresh slot not bound to any DOM element. Used for
+    /// synthetic blocks (line-box wrappers for runs of inline /
+    /// inline-block children). Each call returns a unique ID; the
+    /// slot doesn't participate in lookup() / element_of().
+    ElementId acquire_synthetic();
+
     /// Release every slot; arrays keep their capacity for reuse.
     /// Called by Document::set_html when the DOM is wholesale
     /// replaced.
