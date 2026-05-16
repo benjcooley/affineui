@@ -120,6 +120,7 @@ struct RuleFill {
     int                           gap_px{-1};             // -1 = unset
     std::uint32_t                 border_rgba{0};
     std::uint32_t                 background_rgba{0};
+    std::string                   font_family;            // empty = unset
     bool                          has_border_color{false};
     bool                          has_background{false};
 };
@@ -666,21 +667,58 @@ std::pair<std::uint32_t, bool> find_decl_hex(std::string_view decls,
     return {0, false};
 }
 
+// Find `key: <token>` and return the first comma/semicolon-delimited
+// token, with surrounding whitespace and any wrapping ' or " stripped.
+// Used to extract the first family name from `font-family: <list>`.
+std::string find_decl_first_ident(std::string_view decls,
+                                  std::string_view key) {
+    std::size_t pos = 0;
+    while (pos < decls.size()) {
+        const auto kp = decls.find(key, pos);
+        if (kp == std::string_view::npos) return {};
+        const bool at_boundary =
+            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
+        if (!at_boundary) { pos = kp + 1; continue; }
+        auto rest = decls.substr(kp + key.size());
+        rest = ltrim_ws(rest);
+        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
+        rest = ltrim_ws(rest.substr(1));
+        std::size_t end = 0;
+        while (end < rest.size() && rest[end] != ',' && rest[end] != ';')
+            ++end;
+        std::string tok(trim_css_ws(rest.substr(0, end)));
+        // Strip a wrapping pair of quotes (matching).
+        if (tok.size() >= 2 &&
+            ((tok.front() == '"'  && tok.back() == '"') ||
+             (tok.front() == '\'' && tok.back() == '\''))) {
+            tok = tok.substr(1, tok.size() - 2);
+        }
+        return tok;
+    }
+    return {};
+}
+
 // Walk the raw CSS source for each rule's `border-radius` and
 // `border-color` declarations. For rules whose selector(s) parse as
 // static (no pseudo / no advanced combinators), append a RuleFill
 // entry per comma-separated group.
 void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
     for (const auto& raw : split_css_rules(css)) {
-        const int radius = find_decl_px(raw.decls, "border-radius");
-        const auto bc    = find_decl_hex(raw.decls, "border-color");
-        const int gap    = find_decl_px(raw.decls, "gap");
+        const int  radius = find_decl_px(raw.decls, "border-radius");
+        const auto bc     = find_decl_hex(raw.decls, "border-color");
+        const int  gap    = find_decl_px(raw.decls, "gap");
         // `background` shorthand. find_decl_hex's boundary check
         // requires `:` immediately (after optional ws), so the same
         // call won't accidentally hit `background-color` — that's a
         // separate property handled by lexbor's longhand path.
-        const auto bg    = find_decl_hex(raw.decls, "background");
-        if (radius < 0 && !bc.second && gap < 0 && !bg.second) continue;
+        const auto bg     = find_decl_hex(raw.decls, "background");
+        // font-family — only the first family name is honored. Real
+        // browsers walk the fallback list and pick the first family
+        // that has a face installed; our resolver does a similar
+        // fallback inside resolve_font when the name doesn't match.
+        const auto ff     = find_decl_first_ident(raw.decls, "font-family");
+        if (radius < 0 && !bc.second && gap < 0 && !bg.second &&
+            ff.empty()) continue;
 
         // Each comma-separated group becomes its own RuleFill.
         std::string_view sel_text = trim_css_ws(raw.selector);
@@ -703,6 +741,7 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
                     rf.has_border_color  = bc.second;
                     rf.background_rgba   = bg.first;
                     rf.has_background    = bg.second;
+                    rf.font_family       = ff;
                     out.push_back(std::move(rf));
                 }
             }
@@ -909,6 +948,9 @@ void collect_blocks(detail::DocumentImpl& impl,
                 rs.animated.border_rgba = rf.border_rgba;
             if (rf.has_background)
                 rs.animated.background_rgba = rf.background_rgba;
+            if (!rf.font_family.empty())
+                rs.computed.font_id = impl.style_store.intern_font_family(
+                    rf.font_family);
         }
 
         impl.style_store.computed(id) = rs.computed;
@@ -1135,7 +1177,7 @@ void Document::layout(int viewport_width, int viewport_height,
         // painter's nvgTextBoxBounds per constraint width.
         if (measurer != nullptr) {
             in.font = measurer->resolve_font(
-                "sans-serif", cs.font_size_px, cs.font_weight, cs.font_style != 0);
+                impl_->style_store.font_family_of(cs.font_id), cs.font_size_px, cs.font_weight, cs.font_style != 0);
             in.text = b.text;
             // Leave intrinsic_h_px = 0 — the measure callback supplies
             // the height instead.
@@ -1290,7 +1332,7 @@ void Document::draw(Painter& painter) {
 
         if (!b.text.empty()) {
             const auto font = painter.resolve_font(
-                "sans-serif", cs.font_size_px, cs.font_weight, cs.font_style != 0);
+                impl_->style_store.font_family_of(cs.font_id), cs.font_size_px, cs.font_weight, cs.font_style != 0);
             const int text_x = eff.x + cs.border_left + cs.padding_left;
             const int text_y = eff.y + cs.border_top  + cs.padding_top;
             const float content_w = static_cast<float>(
@@ -1474,6 +1516,9 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
             rs.animated.border_rgba = rf.border_rgba;
         if (rf.has_background)
             rs.animated.background_rgba = rf.background_rgba;
+        if (!rf.font_family.empty())
+            rs.computed.font_id = impl.style_store.intern_font_family(
+                rf.font_family);
     }
     impl.style_store.computed(block.id) = rs.computed;
     impl.style_store.animated(block.id) = rs.animated;
