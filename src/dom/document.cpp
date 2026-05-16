@@ -66,21 +66,25 @@ struct Block {
 };
 
 #if !defined(AFFINEUI_STUB_BUILD)
-// :hover side-table entry. Populated by scan_hover_rules() at
-// stylesheet-attach time. We keep only the simple-selector subset
-// for MVP: a single tag/class/id identifier plus :hover. Descendant
-// combinators land in Phase 4 (will replay through lxb_selectors_find
-// against a state-aware match callback).
-struct HoverRule {
-    enum class Kind : std::uint8_t { Tag, Class, Id };
+// CSS pseudo-class side-table entry. Populated by scan_pseudo_rules()
+// at stylesheet-attach time. We keep only the simple-selector subset
+// for MVP: a single tag/class/id identifier plus exactly one of
+// :hover / :active. Descendant combinators + multi-simple compounds
+// (`.a.b:hover`) land in Phase 4 via lxb_selectors_find with a state-
+// aware match callback.
+struct PseudoRule {
+    enum class Pseudo : std::uint8_t { Hover, Active };
+    enum class Kind   : std::uint8_t { Tag, Class, Id };
+    Pseudo                                        pseudo;
     Kind                                          kind;
     std::string                                   name;
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
-// Per-element :hover bit lives inside StyleStore::state_bits(). We
-// only claim bit 0 today; :active/:focus stake out bits 1/2 later.
-constexpr std::uint8_t kHoverStateBit = 1u << 0;
+// Per-element state bits in StyleStore::state_bits(). :focus claims
+// bit 2 later when keyboard routing lands.
+constexpr std::uint8_t kHoverStateBit  = 1u << 0;
+constexpr std::uint8_t kActiveStateBit = 1u << 1;
 #endif
 
 }  // namespace
@@ -95,14 +99,17 @@ struct DocumentImpl {
     std::vector<Block>        blocks;
     bool                      paint_dirty{true};  // Phase 2C flips this
 
-    // Interaction state. -1 = pointer is over no block (or off-window).
+    // Interaction state. -1 = no block (off-window or pointer not down).
     // Updated by Document::dispatch; read by App to drive cursor +
-    // :hover and click routing. `hovered_chain` is the ancestor chain
-    // of `hovered_idx` (deepest → root). Recomputed on every
-    // hover-changing event; diffed against the previous chain to
-    // toggle the :hover state bit per affected element.
+    // :hover / :active and click routing. The *_chain vectors hold the
+    // deepest → root block indices for the currently-hovered (resp.
+    // -pressed) element. Recomputed on every relevant event; diffed
+    // against the previous chain to toggle the pseudo state bit per
+    // affected element.
     int                       hovered_idx{-1};
+    int                       active_idx{-1};
     std::vector<int>          hovered_chain;
+    std::vector<int>          active_chain;
     Point                     last_mouse_pos{};
 
     // Immediate-mode runtime — lazily created on the first
@@ -117,10 +124,10 @@ struct DocumentImpl {
 #if !defined(AFFINEUI_STUB_BUILD)
     lxb_html_document_t*               doc{nullptr};
     std::vector<lxb_css_stylesheet_t*> sheets;
-    // :hover overlay rules — populated by scan_hover_rules() during
-    // attach. Pointers in `decls` reference rule data owned by the
-    // document's CSS memory pool; valid for the document's lifetime.
-    std::vector<HoverRule>             hover_rules;
+    // :hover / :active overlay rules — populated by scan_pseudo_rules()
+    // during attach. Pointers in `decls` reference rule data owned by
+    // the document's CSS memory pool; valid for the document's lifetime.
+    std::vector<PseudoRule>            pseudo_rules;
     std::unique_ptr<StyleResolver>     resolver;
     ResolvedStyle                      root_style{};  // inheritance root
 #endif
@@ -258,14 +265,14 @@ void collect_style_text(lxb_dom_node_t* node, std::string& out) {
 // Parse + attach a single stylesheet string. Quietly tolerates parse
 // failures so a malformed user stylesheet doesn't take the whole
 // pipeline down.
-// Walk one stylesheet's parsed rules and pull out the :hover rules
-// we can apply via the overlay path. We accept only single-compound
-// selectors of the form `tag:hover` / `.cls:hover` / `#id:hover`
-// today; anything richer (descendant combinators, multiple class
-// joins, functional pseudos) is silently skipped and lands in the
-// Phase 4 polish pass.
-void scan_hover_rules(lxb_css_stylesheet_t* sst,
-                      std::vector<HoverRule>& out) {
+// Walk one stylesheet's parsed rules and pull out :hover / :active
+// rules we can apply via the overlay path. MVP accepts only single-
+// compound selectors of the form `tag:hover` / `.cls:hover` /
+// `#id:hover` (and same for :active). Anything richer (descendant
+// combinators, multi-simple compounds, functional pseudos) is
+// silently skipped and lands in the Phase 4 polish pass.
+void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
+                       std::vector<PseudoRule>& out) {
     if (!sst || !sst->root) return;
     auto* rule_list = lxb_css_rule_list(sst->root);
     for (auto* r = rule_list->first; r != nullptr; r = r->next) {
@@ -275,8 +282,9 @@ void scan_hover_rules(lxb_css_stylesheet_t* sst,
         // selector is a comma-separated chain of compound chains.
         for (auto* sl = style->selector; sl != nullptr; sl = sl->next) {
             const lxb_css_selector_t* identifier = nullptr;
-            bool has_hover = false;
-            bool ok        = true;
+            bool                       has_pseudo = false;
+            PseudoRule::Pseudo         pseudo{};
+            bool                       ok = true;
 
             for (auto* sel = sl->first; sel != nullptr; sel = sel->next) {
                 // Multi-compound (descendant/child/sibling combinator
@@ -287,12 +295,18 @@ void scan_hover_rules(lxb_css_stylesheet_t* sst,
                 }
 
                 if (sel->type == LXB_CSS_SELECTOR_TYPE_PSEUDO_CLASS) {
-                    if (sel->u.pseudo.type ==
-                        LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER) {
-                        has_hover = true;
-                    } else {
-                        ok = false; break;  // some other pseudo — skip rule
+                    if (has_pseudo) { ok = false; break; }
+                    switch (sel->u.pseudo.type) {
+                        case LXB_CSS_SELECTOR_PSEUDO_CLASS_HOVER:
+                            pseudo = PseudoRule::Pseudo::Hover;
+                            has_pseudo = true; break;
+                        case LXB_CSS_SELECTOR_PSEUDO_CLASS_ACTIVE:
+                            pseudo = PseudoRule::Pseudo::Active;
+                            has_pseudo = true; break;
+                        default:
+                            ok = false; break;
                     }
+                    if (!ok) break;
                 } else if (sel->type == LXB_CSS_SELECTOR_TYPE_ELEMENT ||
                            sel->type == LXB_CSS_SELECTOR_TYPE_CLASS   ||
                            sel->type == LXB_CSS_SELECTOR_TYPE_ID) {
@@ -305,20 +319,21 @@ void scan_hover_rules(lxb_css_stylesheet_t* sst,
                 }
             }
 
-            if (!ok || !has_hover || !identifier) continue;
+            if (!ok || !has_pseudo || !identifier) continue;
 
-            HoverRule hr;
+            PseudoRule pr;
+            pr.pseudo = pseudo;
             switch (identifier->type) {
-                case LXB_CSS_SELECTOR_TYPE_ELEMENT: hr.kind = HoverRule::Kind::Tag;   break;
-                case LXB_CSS_SELECTOR_TYPE_CLASS:   hr.kind = HoverRule::Kind::Class; break;
-                case LXB_CSS_SELECTOR_TYPE_ID:      hr.kind = HoverRule::Kind::Id;    break;
+                case LXB_CSS_SELECTOR_TYPE_ELEMENT: pr.kind = PseudoRule::Kind::Tag;   break;
+                case LXB_CSS_SELECTOR_TYPE_CLASS:   pr.kind = PseudoRule::Kind::Class; break;
+                case LXB_CSS_SELECTOR_TYPE_ID:      pr.kind = PseudoRule::Kind::Id;    break;
                 default: continue;
             }
-            hr.name.assign(
+            pr.name.assign(
                 reinterpret_cast<const char*>(identifier->name.data),
                 identifier->name.length);
-            hr.decls = style->declarations;
-            out.push_back(std::move(hr));
+            pr.decls = style->declarations;
+            out.push_back(std::move(pr));
         }
     }
 }
@@ -336,7 +351,7 @@ void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
     if (!sst) return;
     if (lxb_html_document_stylesheet_attach(impl.doc, sst) == LXB_STATUS_OK) {
         impl.sheets.push_back(sst);
-        scan_hover_rules(sst, impl.hover_rules);
+        scan_pseudo_rules(sst, impl.pseudo_rules);
     } else {
         lxb_css_stylesheet_destroy(sst, true);
     }
@@ -459,27 +474,31 @@ void collect_blocks(detail::DocumentImpl& impl,
         const auto id = impl.style_store.acquire(elem);
         auto rs = impl.resolver->resolve(elem, parent_style);
 
-        // :hover overlay — at collect time, the bit is preserved from
-        // any previous hover state (state_bits survives reset/acquire).
-        // dispatch() will re-resolve affected blocks when the hover
-        // chain changes, so collect-time work is the steady-state path.
-        if (impl.style_store.state_bits(id) & kHoverStateBit) {
-            const auto match = [&](const HoverRule& rule) {
+        // Pseudo-class overlay (:hover, :active) — at collect time the
+        // bits are preserved from any prior interaction state (they
+        // survive reset/acquire). dispatch() re-resolves affected
+        // blocks when chains change, so collect-time work is the
+        // steady-state path.
+        const auto sb_at_collect = impl.style_store.state_bits(id);
+        if (sb_at_collect != 0 && !impl.pseudo_rules.empty()) {
+            const auto elem_id_attr = attr_string(elem, "id");
+            const auto cls_attr     = split_classes(attr_string(elem, "class"));
+            const auto match = [&](const PseudoRule& rule) {
                 switch (rule.kind) {
-                    case HoverRule::Kind::Tag:   return rule.name == tag;
-                    case HoverRule::Kind::Id:    return rule.name ==
-                        attr_string(elem, "id");
-                    case HoverRule::Kind::Class: {
-                        const auto cls_attr = split_classes(
-                            attr_string(elem, "class"));
+                    case PseudoRule::Kind::Tag:   return rule.name == tag;
+                    case PseudoRule::Kind::Id:    return rule.name == elem_id_attr;
+                    case PseudoRule::Kind::Class:
                         return std::find(cls_attr.begin(), cls_attr.end(),
                                          rule.name) != cls_attr.end();
-                    }
                 }
                 return false;
             };
-            for (const auto& hr : impl.hover_rules) {
-                if (match(hr)) impl.resolver->apply_decl_list(hr.decls, rs);
+            for (const auto& pr : impl.pseudo_rules) {
+                const std::uint8_t bit =
+                    (pr.pseudo == PseudoRule::Pseudo::Hover)
+                        ? kHoverStateBit : kActiveStateBit;
+                if (!(sb_at_collect & bit)) continue;
+                if (match(pr)) impl.resolver->apply_decl_list(pr.decls, rs);
             }
         }
 
@@ -546,8 +565,10 @@ void Document::set_html(std::string_view html) {
     // attached stylesheets, so destroying doc tears them down too.
     impl_->resolver.reset();
     impl_->sheets.clear();
-    impl_->hover_rules.clear();
+    impl_->pseudo_rules.clear();
     impl_->hovered_chain.clear();
+    impl_->active_chain.clear();
+    impl_->active_idx = -1;
     if (impl_->doc) {
         lxb_html_document_destroy(impl_->doc);
         impl_->doc = nullptr;
@@ -816,9 +837,30 @@ detail::ResolvedStyle parent_resolved(const detail::DocumentImpl& impl,
     return rs;
 }
 
-// Re-resolve one block's style (paint-only properties), applying the
-// :hover overlay if the bit is set. We don't touch layout: :hover
-// affecting layout would require relayout-on-hover, which lands with
+// Apply currently-active pseudo-class overlays (per the block's
+// state_bits) on top of `rs`. Shared by restyle_block (dispatch
+// path) and the equivalent collect-time path inline above.
+void apply_pseudo_overlay(detail::DocumentImpl& impl, const Block& block,
+                          detail::ResolvedStyle& rs) {
+    const auto sb = impl.style_store.state_bits(block.id);
+    if (sb == 0) return;
+    for (const auto& pr : impl.pseudo_rules) {
+        const std::uint8_t bit = (pr.pseudo == PseudoRule::Pseudo::Hover)
+            ? kHoverStateBit : kActiveStateBit;
+        if (!(sb & bit)) continue;
+        const bool match =
+               (pr.kind == PseudoRule::Kind::Tag   && pr.name == block.tag)
+            || (pr.kind == PseudoRule::Kind::Id    && pr.name == block.elem_id)
+            || (pr.kind == PseudoRule::Kind::Class &&
+                std::find(block.classes.begin(), block.classes.end(),
+                          pr.name) != block.classes.end());
+        if (match) impl.resolver->apply_decl_list(pr.decls, rs);
+    }
+}
+
+// Re-resolve one block's style (paint-only properties), applying any
+// active pseudo overlays. We don't touch layout: pseudo overlays
+// affecting layout would require relayout-on-state, which lands with
 // the broader restyle queue in Phase 4. Bounds in the block stay put.
 void restyle_block(detail::DocumentImpl& impl, int idx) {
     auto& block = impl.blocks[static_cast<std::size_t>(idx)];
@@ -826,51 +868,56 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
     if (!elem) return;
     auto parent = parent_resolved(impl, idx);
     auto rs     = impl.resolver->resolve(elem, parent);
-    if (impl.style_store.state_bits(block.id) & kHoverStateBit) {
-        for (const auto& hr : impl.hover_rules) {
-            const bool match = (hr.kind == HoverRule::Kind::Tag    && hr.name == block.tag)
-                            || (hr.kind == HoverRule::Kind::Id     && hr.name == block.elem_id)
-                            || (hr.kind == HoverRule::Kind::Class  &&
-                                std::find(block.classes.begin(), block.classes.end(),
-                                          hr.name) != block.classes.end());
-            if (match) impl.resolver->apply_decl_list(hr.decls, rs);
-        }
-    }
+    apply_pseudo_overlay(impl, block, rs);
     impl.style_store.computed(block.id) = rs.computed;
     impl.style_store.animated(block.id) = rs.animated;
     impl.paint_dirty = true;
 }
 
-// Update the hover chain in response to a pointer move. Returns true
-// when the chain changed (and therefore a repaint is required).
-bool refresh_hover_chain(detail::DocumentImpl& impl) {
-    auto new_chain = build_hover_chain(impl.blocks, impl.hovered_idx);
-    if (new_chain == impl.hovered_chain) return false;
+// Generic chain-refresh helper used by both :hover (chain follows the
+// pointer) and :active (chain follows the pressed element). `bit`
+// selects which state bit to toggle; `current_chain` is the previous
+// chain that we'll diff against and overwrite. Returns true on change.
+bool refresh_pseudo_chain(detail::DocumentImpl& impl,
+                          std::vector<int>& current_chain,
+                          int target_idx,
+                          std::uint8_t bit) {
+    auto new_chain = build_hover_chain(impl.blocks, target_idx);
+    if (new_chain == current_chain) return false;
 
-    // Diff: anything in old\new is leaving (clear bit + restyle), any
-    // in new\old is entering (set bit + restyle). Small chains, O(n*m)
-    // is fine. Sorting + set_diff is the upgrade if chains ever grow.
     const auto in = [](int x, const std::vector<int>& v) {
         return std::find(v.begin(), v.end(), x) != v.end();
     };
-    for (int old_idx : impl.hovered_chain) {
+    // Leaving blocks: clear bit + restyle.
+    for (int old_idx : current_chain) {
         if (in(old_idx, new_chain)) continue;
         const auto id = impl.blocks[static_cast<std::size_t>(old_idx)].id;
-        impl.style_store.state_bits(id) &=
-            static_cast<std::uint8_t>(~kHoverStateBit);
+        impl.style_store.state_bits(id) &= static_cast<std::uint8_t>(~bit);
         restyle_block(impl, old_idx);
     }
+    // Entering blocks: set bit + restyle.
     for (int new_idx : new_chain) {
-        if (in(new_idx, impl.hovered_chain)) continue;
+        if (in(new_idx, current_chain)) continue;
         const auto id = impl.blocks[static_cast<std::size_t>(new_idx)].id;
-        impl.style_store.state_bits(id) |= kHoverStateBit;
+        impl.style_store.state_bits(id) |= bit;
         restyle_block(impl, new_idx);
     }
-    impl.hovered_chain = std::move(new_chain);
+    current_chain = std::move(new_chain);
     return true;
 }
-#else  // stub build — no DOM, no hover bookkeeping
-bool refresh_hover_chain(detail::DocumentImpl&) { return false; }
+
+bool refresh_hover_chain(detail::DocumentImpl& impl) {
+    return refresh_pseudo_chain(impl, impl.hovered_chain,
+                                impl.hovered_idx, kHoverStateBit);
+}
+
+bool refresh_active_chain(detail::DocumentImpl& impl) {
+    return refresh_pseudo_chain(impl, impl.active_chain,
+                                impl.active_idx, kActiveStateBit);
+}
+#else  // stub build — no DOM, no pseudo bookkeeping
+bool refresh_hover_chain(detail::DocumentImpl&)  { return false; }
+bool refresh_active_chain(detail::DocumentImpl&) { return false; }
 #endif
 }  // namespace
 
@@ -893,16 +940,31 @@ DispatchResult Document::dispatch(const Event& ev) {
             }
             break;
         }
-        case EventType::MouseDown:
-        case EventType::MouseUp:
-            // Routing to click handlers lands in the next step. For
-            // now: just refresh hover under the click point.
+        case EventType::MouseDown: {
             impl_->last_mouse_pos = ev.pos;
             impl_->hovered_idx    = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
-            if (refresh_hover_chain(*impl_)) {
-                result.redraw_requested = true;
-            }
+            // :active follows the press: set to whatever's under the
+            // pointer right now, refresh the active chain so the bit
+            // toggles on and an immediate restyle visualizes the press.
+            impl_->active_idx     = impl_->hovered_idx;
+            const bool h = refresh_hover_chain(*impl_);
+            const bool a = refresh_active_chain(*impl_);
+            if (h || a) result.redraw_requested = true;
             break;
+        }
+        case EventType::MouseUp: {
+            impl_->last_mouse_pos = ev.pos;
+            impl_->hovered_idx    = hit_test_blocks(impl_->blocks, ev.pos.x, ev.pos.y);
+            // Clear :active on every MouseUp — the press is over. We
+            // don't try to be clever about "release outside the
+            // pressed element" today; that nuance is part of the
+            // click-state machinery to layer in later.
+            impl_->active_idx     = -1;
+            const bool h = refresh_hover_chain(*impl_);
+            const bool a = refresh_active_chain(*impl_);
+            if (h || a) result.redraw_requested = true;
+            break;
+        }
         default:
             break;
     }

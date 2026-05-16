@@ -157,6 +157,31 @@ TEST_CASE("font-size in px lands in ComputedStyle, not AnimatedStyle") {
     CHECK(rs.computed.font_size_px == 42);
 }
 
+TEST_CASE(":active overlay layered via apply_decl_list updates the color") {
+    // Sibling of the :hover test below. The overlay primitive is
+    // pseudo-class agnostic — :active rides the same machinery,
+    // verified independently here so a regression on one doesn't
+    // mask the other.
+    CssEnv env("<button>hi</button>");
+    env.attach("button { color: #00ff00; }");
+    env.attach("button:active { color: #0000ff; }");
+    env.build_resolver();
+
+    auto* btn = env.find("button");
+    REQUIRE(btn != nullptr);
+
+    affineui::detail::ResolvedStyle rs = env.resolver->resolve(btn, {});
+    CHECK(rs.animated.color_rgba == rgba(0x00, 0xFF, 0x00));
+
+    auto* active_sheet = env.sheets.back();
+    auto* rule_list    = lxb_css_rule_list(active_sheet->root);
+    REQUIRE(rule_list->first != nullptr);
+    auto* style_rule   = lxb_css_rule_style(rule_list->first);
+
+    env.resolver->apply_decl_list(style_rule->declarations, rs);
+    CHECK(rs.animated.color_rgba == rgba(0x00, 0x00, 0xFF));
+}
+
 TEST_CASE(":hover overlay layered via apply_decl_list updates the color") {
     // Two sheets: the first is the base (always matched), the second
     // is the :hover overlay (matched separately by our side-table).
