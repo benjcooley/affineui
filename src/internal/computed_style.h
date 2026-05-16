@@ -57,9 +57,15 @@ struct ComputedStyle {
     std::int16_t max_width {-1};
     std::int16_t min_height{0};
 
-    // ── Text layout (4 bytes) ─────────────────────────────────────
+    // ── Text layout (6 bytes) ─────────────────────────────────────
     std::uint16_t font_size_px{16};  // resolved px
     std::uint16_t font_weight {400};  // 100..900
+    // Line-height as multiplier x 100. 0 = unset (paint uses NVG
+    // default of 1.0 today; eventually we'll match browsers' 1.2
+    // baseline). Length-typed `line-height: 24px` lands as a
+    // negative value: -24 means "absolute 24 px," distinguished
+    // from any positive multiplier.
+    std::int16_t  line_height_x100{0};
 
     // ── Display + flex + position (4 bytes) ───────────────────────
     enum class Display : std::uint8_t {

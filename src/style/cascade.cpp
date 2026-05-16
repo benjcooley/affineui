@@ -385,6 +385,46 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
                 s.computed.font_size_px = static_cast<std::uint16_t>(px);
             break;
         }
+        case LXB_CSS_PROPERTY_LINE_HEIGHT: {
+            const auto* v =
+                static_cast<const lxb_css_property_line_height_t*>(d->u.user);
+            switch (v->type) {
+                case LXB_CSS_LINE_HEIGHT_NORMAL:
+                    // CSS "normal" is font-dependent (~1.2 typical).
+                    // Leave at 0 = unset; paint applies the default.
+                    break;
+                case LXB_CSS_LINE_HEIGHT__NUMBER: {
+                    const auto m = v->u.number.num * 100.0;
+                    s.computed.line_height_x100 =
+                        static_cast<std::int16_t>(std::clamp(m, 0.0, 32760.0));
+                    break;
+                }
+                case LXB_CSS_LINE_HEIGHT__PERCENTAGE: {
+                    // 150% → multiplier 1.5 → x100 = 150.
+                    const auto m = v->u.percentage.num;
+                    s.computed.line_height_x100 =
+                        static_cast<std::int16_t>(std::clamp(m, 0.0, 32760.0));
+                    break;
+                }
+                case LXB_CSS_LINE_HEIGHT__LENGTH: {
+                    // line-height: <px>. Stored as a negative
+                    // sentinel so the paint side can tell "absolute"
+                    // apart from "multiplier."
+                    int px = 0;
+                    // For length type, the value lives in v->u.length.
+                    if (v->u.length.unit == LXB_CSS_UNIT__UNDEF
+                        || v->u.length.unit == LXB_CSS_UNIT_PX) {
+                        px = static_cast<int>(v->u.length.num + 0.5);
+                    }
+                    if (px > 0)
+                        s.computed.line_height_x100 =
+                            static_cast<std::int16_t>(-px);
+                    break;
+                }
+                default: break;
+            }
+            break;
+        }
         case LXB_CSS_PROPERTY_FONT_STYLE: {
             const auto* v =
                 static_cast<const lxb_css_property_font_style_t*>(d->u.user);
