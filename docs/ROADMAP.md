@@ -52,9 +52,12 @@ loops, not the other way around.
 - [x] `:hover` pseudo-class via side-table overlay — single-compound
       selectors only (`button:hover`, `.btn:hover`, `#id:hover`).
       Ancestor chain tracking + per-element re-resolve on toggle.
-- [ ] `:hover` widened to descendant / multi-class compounds via
-      `lxb_selectors_find` with a state-aware match callback
-- [ ] `:active` (mouse-down state) reuses the same overlay machinery
+- [x] `:active` (mouse-down state) — same overlay machinery as
+      :hover, separate state bit + chain. MouseDown sets, MouseUp
+      clears, restyle fires per affected element.
+- [ ] `:hover` / `:active` widened to multi-simple compounds and
+      descendant combinators via `lxb_selectors_find` with a state-
+      aware match callback
 - [ ] Scroll (wheel + drag) on `overflow: auto|scroll` containers
 - [ ] Keyboard routing for focused inputs (`on_key_press`, IME stub)
 - [ ] Inline-style scan for properties lexbor 2.4 doesn't expose
