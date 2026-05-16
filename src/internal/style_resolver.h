@@ -1,0 +1,54 @@
+#pragma once
+
+#include "internal/animated_style.h"
+#include "internal/computed_style.h"
+
+#include <memory>
+
+// Forward declarations so callers don't drag in lexbor headers.
+struct lxb_html_document;
+typedef struct lxb_html_document lxb_html_document_t;
+struct lxb_dom_element;
+typedef struct lxb_dom_element lxb_dom_element_t;
+
+namespace affineui::detail {
+
+/// The two-struct bundle the cascade resolves into. Splitting them
+/// pays off downstream: layout reads ComputedStyle only, paint reads
+/// AnimatedStyle only, composite reads only the transform/opacity
+/// fields out of AnimatedStyle. See docs/DESIGN.md §
+/// "Real-time render architecture."
+struct ResolvedStyle {
+    ComputedStyle computed{};
+    AnimatedStyle animated{};
+};
+
+/// Abstract style resolver. Phase 2 ships one impl (lexbor-backed)
+/// that delegates to lexbor's cascade via `lxb_html_element_style_walk`.
+/// Future phases can swap in a custom matcher with bloom filters,
+/// invalidation sets, computed-style sharing — the rest of the
+/// engine sees only this interface.
+class StyleResolver {
+public:
+    virtual ~StyleResolver() = default;
+
+    /// Resolve the full style for `element`, merging in inherited
+    /// properties from `parent`. Phase 2 is uncached; Phase 3 adds
+    /// the dirty-bit caching described in DESIGN.md.
+    virtual ResolvedStyle resolve(lxb_dom_element_t* element,
+                                  const ResolvedStyle& parent) = 0;
+
+    /// Mark an element's style cache entry dirty so the next
+    /// `resolve()` call recomputes. Phase 2 doesn't yet propagate
+    /// to descendants.
+    virtual void invalidate(lxb_dom_element_t* element) = 0;
+
+    /// Drop all caches. Called by Document::set_html when the DOM
+    /// is wholesale replaced.
+    virtual void clear() = 0;
+};
+
+/// Construct the default resolver, backed by lexbor's cascade.
+std::unique_ptr<StyleResolver> make_lexbor_resolver(lxb_html_document_t* doc);
+
+}  // namespace affineui::detail
