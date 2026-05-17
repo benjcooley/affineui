@@ -57,6 +57,27 @@ inline sapp_mouse_cursor cursor_to_sokol(int c) {
 
 // ── Event translation + dispatch ────────────────────────────────────
 
+// Map sokol_app's SAPP_KEYCODE_* into our platform-independent
+// Key enum. Only the keys AffineUI actually dispatches on are
+// listed — everything else falls through to Key::Unknown (the
+// caller still gets the raw scancode in Event::key_code if needed).
+inline Key key_to_affine(int sapp_keycode) {
+    switch (sapp_keycode) {
+        case SAPP_KEYCODE_ESCAPE:    return Key::Escape;
+        case SAPP_KEYCODE_TAB:       return Key::Tab;
+        case SAPP_KEYCODE_ENTER:     return Key::Enter;
+        case SAPP_KEYCODE_BACKSPACE: return Key::Backspace;
+        case SAPP_KEYCODE_DELETE:    return Key::Delete;
+        case SAPP_KEYCODE_LEFT:      return Key::ArrowLeft;
+        case SAPP_KEYCODE_RIGHT:     return Key::ArrowRight;
+        case SAPP_KEYCODE_UP:        return Key::ArrowUp;
+        case SAPP_KEYCODE_DOWN:      return Key::ArrowDown;
+        case SAPP_KEYCODE_HOME:      return Key::Home;
+        case SAPP_KEYCODE_END:       return Key::End;
+        default:                     return Key::Unknown;
+    }
+}
+
 /// Translate a sokol_app event to affineui::Event. Mouse coords are
 /// converted from framebuffer pixels (sokol's units) to CSS points
 /// (Ui's units) using `sapp_dpi_scale()`.
@@ -71,6 +92,16 @@ inline Event translate(const sapp_event* ev) {
         case SAPP_EVENTTYPE_MOUSE_LEAVE:
             out.type = EventType::MouseMove;
             out.pos  = Point{-1, -1};
+            return out;
+        case SAPP_EVENTTYPE_KEY_DOWN:
+            out.type     = EventType::KeyDown;
+            out.key_code = static_cast<int>(ev->key_code);
+            out.key      = key_to_affine(ev->key_code);
+            return out;
+        case SAPP_EVENTTYPE_KEY_UP:
+            out.type     = EventType::KeyUp;
+            out.key_code = static_cast<int>(ev->key_code);
+            out.key      = key_to_affine(ev->key_code);
             return out;
         default:
             return out;  // type stays None → caller skips

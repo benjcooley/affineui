@@ -144,6 +144,37 @@ TEST_CASE("a more-specific rule overrides a less-specific one") {
     CHECK(h1_rs.animated.color_rgba == rgba(0xF3, 0x8B, 0xA8));
 }
 
+TEST_CASE("lexbor counts simple pseudo-classes in selector specificity") {
+    CssEnv env("<button class=\"btn\">hi</button>");
+    env.attach(".btn {} .btn:focus {}");
+
+    auto* sheet = env.sheets.back();
+    auto* rules = lxb_css_rule_list(sheet->root);
+    REQUIRE(rules->first != nullptr);
+    REQUIRE(rules->first->next != nullptr);
+
+    auto* base_rule = lxb_css_rule_style(rules->first);
+    auto* focus_rule = lxb_css_rule_style(rules->first->next);
+    REQUIRE(base_rule->selector != nullptr);
+    REQUIRE(focus_rule->selector != nullptr);
+
+    CHECK(focus_rule->selector->specificity >
+          base_rule->selector->specificity);
+}
+
+TEST_CASE("border side color longhands reach the resolved border color") {
+    CssEnv env("<button>hi</button>");
+    env.attach("button { border-top-color: #445566; }");
+    env.build_resolver();
+
+    auto* button = env.find("button");
+    REQUIRE(button != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto rs = env.resolver->resolve(button, parent);
+    CHECK(rs.animated.border_rgba == rgba(0x44, 0x55, 0x66));
+}
+
 TEST_CASE("font-size in px lands in ComputedStyle, not AnimatedStyle") {
     CssEnv env("<h1>hi</h1>");
     env.attach("h1 { font-size: 42px; }");

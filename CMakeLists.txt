@@ -75,7 +75,7 @@ if(NOT AFFINEUI_DEPS_AVAILABLE)
     message(WARNING
         "Vendored dependencies not present under external/. The library will "
         "build a stub (compile-only) so CMake still configures and tests can "
-        "run. Run ./scripts/fetch_deps.sh to enable real rendering.")
+        "run. Restore the checked-in external/ sources to enable real rendering.")
 endif()
 
 # ─── Library target ──────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ install(FILES
 message(STATUS "")
 message(STATUS "AffineUI ${PROJECT_VERSION}")
 message(STATUS "  Backend:        ${AFFINEUI_BACKEND_RESOLVED}")
-message(STATUS "  Deps fetched:   ${AFFINEUI_DEPS_AVAILABLE}")
+message(STATUS "  Deps available: ${AFFINEUI_DEPS_AVAILABLE}")
 message(STATUS "  Imm mode:       ${AFFINEUI_ENABLE_IMM}")
 message(STATUS "  C ABI:          ${AFFINEUI_ENABLE_C_API}")
 message(STATUS "  Examples:       ${AFFINEUI_BUILD_EXAMPLES}")

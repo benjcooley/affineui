@@ -67,6 +67,28 @@ inline SDL_Cursor* get_cached_cursor(int c) {
 
 // ── Event translation + dispatch ────────────────────────────────────
 
+// Map SDL keycodes to our platform-independent Key enum. Only the
+// keys AffineUI dispatches on are listed; everything else is
+// Key::Unknown and arrives at Document::dispatch with the raw
+// SDLK_* value in Event::key_code for callers that want it.
+inline Key key_to_affine(SDL_Keycode sym) {
+    switch (sym) {
+        case SDLK_ESCAPE:    return Key::Escape;
+        case SDLK_TAB:       return Key::Tab;
+        case SDLK_RETURN:    return Key::Enter;
+        case SDLK_KP_ENTER:  return Key::Enter;
+        case SDLK_BACKSPACE: return Key::Backspace;
+        case SDLK_DELETE:    return Key::Delete;
+        case SDLK_LEFT:      return Key::ArrowLeft;
+        case SDLK_RIGHT:     return Key::ArrowRight;
+        case SDLK_UP:        return Key::ArrowUp;
+        case SDLK_DOWN:      return Key::ArrowDown;
+        case SDLK_HOME:      return Key::Home;
+        case SDLK_END:       return Key::End;
+        default:             return Key::Unknown;
+    }
+}
+
 inline Event translate(const SDL_Event& ev) {
     Event out{};
     switch (ev.type) {
@@ -101,6 +123,14 @@ inline Event translate(const SDL_Event& ev) {
             int mx = 0, my = 0;
             SDL_GetMouseState(&mx, &my);
             out.pos = Point{mx, my};
+            return out;
+        }
+        case SDL_KEYDOWN:
+        case SDL_KEYUP: {
+            out.type = (ev.type == SDL_KEYDOWN) ? EventType::KeyDown
+                                                : EventType::KeyUp;
+            out.key_code = static_cast<int>(ev.key.keysym.sym);
+            out.key      = key_to_affine(ev.key.keysym.sym);
             return out;
         }
         case SDL_WINDOWEVENT:

@@ -1,15 +1,15 @@
 # Vendored dependency wiring.
 #
-# fetch_deps.sh populates external/ with pinned upstreams. The check
+# external/ contains curated, checked-in source snapshots. The check
 # below reports whether real rendering is buildable; when the deps are
 # missing the library still compiles as a stub so CMake configures
-# cleanly on a fresh clone.
+# cleanly.
 #
 # Helpers we vendor:
 #   external/sokol/        sokol_gfx.h, sokol_app.h, sokol_glue.h (zlib)
 #   external/nanovg/       nanovg.h + nanovg.c + GL/Metal backends   (zlib)
 #   external/stb/          stb_truetype.h, stb_image.h                (MIT)
-#   external/fontstash/    fontstash.h                                (zlib)
+#   external/nanovg/src/   NanoVG plus its bundled fontstash/stb deps  (zlib/MIT)
 #   external/lexbor/       html, css, dom, selectors, core modules    (Apache-2)
 #   external/yoga/         flexbox layout engine                      (MIT)
 
@@ -21,10 +21,9 @@ function(affineui_check_vendored_deps out)
         "${_AFFINEUI_EXT}/sokol/sokol_gfx.h"
         "${_AFFINEUI_EXT}/sokol/sokol_app.h"
         "${_AFFINEUI_EXT}/sokol/sokol_glue.h"
-        "${_AFFINEUI_EXT}/nanovg/nanovg.h"
+        "${_AFFINEUI_EXT}/nanovg/src/nanovg.h"
         "${_AFFINEUI_EXT}/stb/stb_image.h"
         "${_AFFINEUI_EXT}/stb/stb_truetype.h"
-        "${_AFFINEUI_EXT}/fontstash/fontstash.h"
         "${_AFFINEUI_EXT}/lexbor/source/lexbor/html/html.h"
         "${_AFFINEUI_EXT}/lexbor/source/lexbor/css/css.h"
         "${_AFFINEUI_EXT}/lexbor/source/lexbor/dom/dom.h"
@@ -63,11 +62,11 @@ function(affineui_link_vendored_deps target)
         "${_AFFINEUI_EXT}/lexbor/source")
 
     # ── Yoga: same shape — guarded, static ────────────────────────────
-    if(EXISTS "${_AFFINEUI_EXT}/yoga/CMakeLists.txt"
+    if(EXISTS "${_AFFINEUI_EXT}/yoga/yoga/CMakeLists.txt"
        AND NOT AFFINEUI_HOST_PROVIDES_YOGA
        AND NOT TARGET yogacore)
         set(YOGA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        add_subdirectory("${_AFFINEUI_EXT}/yoga"
+        add_subdirectory("${_AFFINEUI_EXT}/yoga/yoga"
                          "${CMAKE_BINARY_DIR}/_deps/yoga" EXCLUDE_FROM_ALL)
     endif()
     if(TARGET yogacore)
@@ -86,7 +85,6 @@ function(affineui_link_vendored_deps target)
         "${_AFFINEUI_EXT}/sokol"
         "${_AFFINEUI_EXT}/nanovg/src"
         "${_AFFINEUI_EXT}/stb"
-        "${_AFFINEUI_EXT}/fontstash/src"
     )
 
     # NanoVG's core C source. Bundles fontstash + stb_truetype +

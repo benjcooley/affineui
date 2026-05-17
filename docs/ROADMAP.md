@@ -193,8 +193,8 @@ Things that *could* land if there's demand. None are committed:
   entries that get reclaimed with the document. Phase 3 dumb-
   reconcile sidesteps the issue entirely.
 - **Lexbor `event_destroy` NULL deref.** Patched in
-  `patches/lexbor-html-event-destroy-null-list.patch`; auto-applied
-  by `scripts/fetch_deps.sh`. Real upstream bug, narrow path, no
+  `patches/lexbor-html-event-destroy-null-list.patch`; applied on the
+  sibling Lexbor fork branch. Real upstream bug, narrow path, no
   upstream issue filed yet.
 - **Text vertical metric.** Intrinsic height in the Yoga adapter
   uses a hand-tuned constant. Plumbing real `nvgTextMetrics` is a

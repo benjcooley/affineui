@@ -11,9 +11,10 @@ can wreck the size budget. Help us stay in the first category.
 2. **The size budget is a feature.** Stripped release binary stays
    under 2 MB with the bootstrap demo. PRs that meaningfully grow the
    binary need to justify it.
-3. **Vendored deps are off-limits for direct edits.** Patch upstream and
-   re-vendor; if a patch can't go upstream, put it in
-   `patches/` and apply it from `fetch_deps.sh`.
+3. **Vendored deps are off-limits for direct edits.** For Lexbor, patch
+   the sibling fork branch and sync it with
+   `scripts/sync_lexbor_from_fork.sh`; keep any long-lived patches
+   documented in `patches/`.
 4. **No new dependencies without discussion.** Open an issue first. The
    bar is: "must be single-header (or two-file), permissively
    licensed, and replace meaningful code we'd otherwise write."
@@ -23,7 +24,6 @@ can wreck the size budget. Help us stay in the first category.
 ```bash
 git clone <your fork>
 cd affineui
-./scripts/fetch_deps.sh
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev

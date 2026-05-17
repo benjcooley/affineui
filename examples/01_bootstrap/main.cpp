@@ -78,6 +78,11 @@ int main() {
             font-size: 16px;
             margin-right: 8px;
         }
+        /* :focus highlight — click a button to see it. ESC clears
+           focus; clicking blank space outside any focusable element
+           does too. (Browsers usually paint a separate `outline` ring;
+           we don't support outline yet, so we re-tint the border.) */
+        .btn:focus { border-color: #212529; }
         .btn-primary {
             background-color: #0d6efd;
             color: #ffffff;

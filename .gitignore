@@ -48,11 +48,13 @@ Testing/
 *.profdata
 coverage/
 
-# Vendored deps: fetched into external/ via scripts/fetch_deps.sh at the
-# pinned refs listed in external/README.md. Nothing under external/ is
-# committed; only the README explaining the convention is tracked.
-external/*
-!external/README.md
+# Vendored deps are checked in under external/. Keep accidental nested
+# checkout/build state out of the repository.
+external/**/.git/
+external/**/build/
+external/**/build-*/
+external/**/cmake-build-*/
+external/**/_build/
 
 # Local
 .cache/

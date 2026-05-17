@@ -22,15 +22,11 @@ sudo dnf install gcc-c++ cmake ninja-build \
     libX11-devel libXi-devel libXcursor-devel mesa-libGL-devel alsa-lib-devel
 ```
 
-## One-time: fetch vendored deps
+## Vendored deps
 
-```bash
-./scripts/fetch_deps.sh
-```
-
-This pulls pinned versions of sokol, litehtml, NanoVG, stb, and fontstash
-into `external/`. Re-run to refresh; nothing in the repo references the
-network at configure or build time after this point.
+The curated dependency sources are checked in under `external/`. A
+normal clone can configure, build, and generate the two-file
+distribution without fetching upstream projects.
 
 ## Configure & build
 
@@ -104,8 +100,9 @@ cmake --build build
 
 ## Troubleshooting
 
-**`fatal error: 'sokol_app.h' file not found`** — you skipped
-`./scripts/fetch_deps.sh`. Run it.
+**`fatal error: 'sokol_app.h' file not found`** — the checked-in
+`external/` source inventory is missing or your include paths do not
+point at it.
 
 **Linux: undefined references to `XOpenDisplay`/`glXCreateContext`** —
 install the X11 + OpenGL dev packages listed above.

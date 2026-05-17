@@ -209,12 +209,12 @@ NOTICES file listing attributions. See
 
 ## Why vendor instead of FetchContent
 
-`scripts/fetch_deps.sh` runs once on clone. After that,
-`cmake -S . -B build` works offline, deterministically, on any machine,
-with any CMake version that meets our minimum. FetchContent fails on
-locked-down build agents, behind corporate proxies, on CI runners with
-cold caches. Vendoring is one extra step once; FetchContent is a
-recurring tax.
+Curated dependency sources are checked in under `external/`. A normal
+clone can run CMake and the two-file generator offline,
+deterministically, on any machine with a supported toolchain.
+FetchContent fails on locked-down build agents, behind corporate
+proxies, and on CI runners with cold caches. Curated vendoring keeps the
+source inventory explicit and reviewable.
 
 ## Why C++20
 

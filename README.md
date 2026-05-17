@@ -1,91 +1,127 @@
 # AffineUI
 
-> A tiny, GPU-accelerated HTML5/CSS UI engine for C++ games and tools.
+AffineUI is a GPU-accelerated HTML5/CSS browser layout and rendering
+engine for C++ games, editors, tools, and other native projects.
 
-AffineUI is an HTML5/CSS UI engine you drop into the game you already
-have. You bring the window, the event loop, and the GPU context;
-AffineUI brings the parser, the cascade, the layout, the paint, the
-hit-testing, and the rendering — composited into your frame as a
-single overlay.
+The entire SDK library is two zero-dependency source files:
 
-The engine itself is built from focused parts: **lexbor** for
-spec-correct HTML/CSS parsing and selector matching, **Yoga** for
-flexbox math, **NanoVG** on **OpenGL 3** for GPU vector painting. The
-cascade, layout adapter, paint driver, click routing, and immediate-
-mode reconciler are ours. **First-class adapters ship for SDL2 and
-sokol_app** — the two windowing toolkits most C++ games use. Other
-toolkits work via a manual `affineui::Event` / `Ui::render` path.
+- [`dist/affineui.h`](dist/affineui.h)
+- [`dist/affineui.cpp`](dist/affineui.cpp)
 
-**Status:** working engine — text wrapping, padding/margin/border,
-rounded corners, flex layout, click handlers, cursor changes. Real
-features land each session; tracker in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+The project focus is support for the browser features modern CSS
+component frameworks need to function: Bootstrap, Material UI,
+Tailwind-style utility systems, Ant-style component markup, and similar
+HTML/CSS UI libraries. The same runtime supports in-game UI, debug UI,
+editor panels, launchers, store panels, settings, and internal tooling.
 
-## What it is, what it isn't
+AffineUI exposes both a retained DOM API and a Dear ImGui-shaped
+immediate-mode C++ API over one style, layout, input, and rendering
+pipeline, with simple integration for SDL2 and sokol_app window
+frameworks.
 
-| ✅ Is | ❌ Isn't |
-|---|---|
-| HTML5 + CSS (the subset we test) | A JavaScript engine |
-| Pure native, GPU-rendered | A web browser |
-| Bootstrap / Material-friendly | An accessibility-complete platform widget set |
-| Drops into your existing game | A windowing toolkit |
+AffineUI does not include JavaScript, video, navigation, networking, or
+a full browser platform.
 
-The compiled engine target: **< 2 MB**. JavaScript is intentionally
-out of scope; drive UI state from your C++ code (or via the
-immediate-mode API).
+## Advantages
 
-## Integration
+- Full-featured browser-style layout and rendering without Electron,
+  CEF, JavaScript, or a large browser framework.
+- Standards-based UI for in-game UI, debug UI, editor panels, launchers,
+  store panels, settings, native tools, and internal tooling.
+- HTML/CSS authoring for designer-owned surfaces; modern CSS component
+  frameworks are target inputs.
+- Immediate-mode C++ API for Dear ImGui-style workflows; retained DOM
+  API for document-driven workflows.
+- Simple native frame-loop integration with SDL2 and sokol_app; manual
+  event/render glue for other window frameworks.
+- Entire SDK library ships as `affineui.h` and `affineui.cpp`; no
+  package manager, runtime DLL, or third-party source tree.
 
-You pick the adapter for the windowing toolkit your game already
-uses. The same `affineui::Ui` facade sits underneath; only the glue
-differs.
+## Artifacts
 
-### SDL2 (the most common engine path)
+The checked-in SDK artifacts are
+[`dist/affineui.h`](dist/affineui.h) and
+[`dist/affineui.cpp`](dist/affineui.cpp). Add both files to the host
+project. Compile `affineui.cpp` once as C++20. Include `affineui.h`
+from game/tool code. No external include directories are required.
+
+Current GL backend defines:
+
+```text
+SOKOL_GLCORE
+SOKOL_NO_ENTRY
+AFFINEUI_BACKEND_GL
+```
+
+## SDL2
+
+Build:
+
+```cmake
+add_library(affineui STATIC
+    third_party/affineui/dist/affineui.cpp)
+
+target_compile_features(affineui PUBLIC cxx_std_20)
+target_compile_definitions(affineui PUBLIC
+    AFFINEUI_WITH_SDL
+    SOKOL_GLCORE
+    SOKOL_NO_ENTRY
+    AFFINEUI_BACKEND_GL)
+target_include_directories(affineui PUBLIC third_party/affineui/dist)
+target_link_libraries(affineui PUBLIC SDL2::SDL2)
+
+target_sources(my_app PRIVATE main.cpp)
+target_link_libraries(my_app PRIVATE affineui)
+```
+
+Use:
 
 ```cpp
-#include <affineui/affineui.h>     // CMake target affineui::sdl
-                                   // defines AFFINEUI_WITH_SDL for you
+#define AFFINEUI_WITH_SDL
+#include "affineui.h"
 #include <SDL.h>
 
-int main() {
-    SDL_Init(SDL_INIT_VIDEO);
-    auto* window = SDL_CreateWindow("My Game",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1024, 768, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
-    SDL_GL_CreateContext(window);
+affineui::Ui ui;
+ui.html(R"(<button id="quit">Quit</button>)");
 
-    affineui::Ui ui;
-    ui.html(R"(<button id="quit">Quit</button>)");
-
-    bool running = true;
-    ui.on_click("#quit", [&]{ running = false; });
-
-    while (running) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) running = false;
-            if (affineui::sdl::dispatch(ui, e)) continue;  // UI consumed it
-            // your game's input handling
-        }
-        // your game's render pass
-        affineui::sdl::render(ui, window);
-        SDL_GL_SwapWindow(window);
+while (running) {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (affineui::sdl::dispatch(ui, ev)) continue;
+        // host input
     }
-    SDL_Quit();
-    return 0;
+
+    // host rendering
+    affineui::sdl::render(ui, window);
+    SDL_GL_SwapWindow(window);
 }
 ```
 
-CMake:
+## sokol_app
+
+Build:
+
 ```cmake
-add_subdirectory(third_party/affineui)
-target_link_libraries(my_game PRIVATE affineui::sdl)
+add_library(affineui STATIC
+    third_party/affineui/dist/affineui.cpp)
+
+target_compile_features(affineui PUBLIC cxx_std_20)
+target_compile_definitions(affineui PUBLIC
+    AFFINEUI_WITH_SOKOL
+    SOKOL_GLCORE
+    SOKOL_NO_ENTRY
+    AFFINEUI_BACKEND_GL)
+target_include_directories(affineui PUBLIC third_party/affineui/dist)
+
+target_sources(my_app PRIVATE main.cpp)
+target_link_libraries(my_app PRIVATE affineui)
 ```
 
-### sokol_app (personal projects, tools, single-file builds)
+Use:
 
 ```cpp
-#include <affineui/affineui.h>     // CMake target affineui::sokol
-                                   // defines AFFINEUI_WITH_SOKOL for you
+#define AFFINEUI_WITH_SOKOL
+#include "affineui.h"
 #include <sokol_log.h>
 
 int main() {
@@ -104,18 +140,19 @@ int main() {
 }
 ```
 
-CMake:
-```cmake
-add_subdirectory(third_party/affineui)
-target_link_libraries(my_game PRIVATE affineui::sokol)
-```
+## Compile-Time Switches
 
-### Manual (any other windowing toolkit)
-
-If your game uses glfw, raylib, or a custom event loop, you build
-`affineui::Event` yourself and call `Ui::render(fb_w, fb_h, dpi)` from
-inside your render pass. ~30 lines of translation glue; the API is
-fully exposed.
+| Macro | Use |
+|---|---|
+| `AFFINEUI_WITH_SDL` | Include the SDL2 adapter from `affineui.h`. |
+| `AFFINEUI_WITH_SOKOL` | Include the sokol_app adapter from `affineui.h`. |
+| `AFFINEUI_NO_IMM` | Omit the immediate-mode layer from the public header. |
+| `AFFINEUI_NO_C_API` | Omit the C ABI surface. |
+| `AFFINEUI_HOST_PROVIDES_SOKOL` | Do not emit sokol implementation symbols. |
+| `AFFINEUI_HOST_PROVIDES_NANOVG` | Do not emit NanoVG implementation symbols. |
+| `AFFINEUI_HOST_PROVIDES_STB_IMAGE` | Do not emit stb_image implementation symbols. |
+| `AFFINEUI_HOST_PROVIDES_STB_TRUETYPE` | Do not emit stb_truetype implementation symbols. |
+| `AFFINEUI_HOST_PROVIDES_FONTSTASH` | Do not emit fontstash implementation symbols. |
 
 ## Adapter coverage
 
@@ -138,13 +175,14 @@ blank document still renders readable, sensibly-spaced HTML.
 **Retained:** call `ui.html("...")` once at setup; mutate via DOM-ish
 methods or replace wholesale when state changes.
 
-**Immediate (Dear ImGui-flavored):** describe the UI in a function
-that calls `imm::div()`, `imm::button()`, etc. AffineUI diffs that
-against the previous tree and patches the retained DOM (React-style
-reconciliation). The view function only re-runs when state or events
-have plausibly changed — painting still happens every frame off the
-retained DOM, so CSS transitions / hover effects / animations work
-without re-entering your view function.
+**Immediate (Dear ImGui-shaped):** describe the UI with ordinary C++
+calls like `imm::div()`, `imm::button()`, `imm::text()`, and
+`imm::use_state()`. The call pattern should feel familiar if you are
+already shipping Dear ImGui panels, but the output is a retained
+HTML/CSS DOM. AffineUI diffs the view against the previous tree and
+patches the DOM; painting still happens every frame off the retained
+tree, so CSS hover/focus/animation can keep running without re-entering
+your view function.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the engine's
 internal shape.
@@ -175,7 +213,6 @@ matching, flexbox math, glyph rasterization, vector painting, window
 ```bash
 git clone https://github.com/youruser/affineui.git
 cd affineui
-./scripts/fetch_deps.sh         # one-time: pulls lexbor, yoga, sokol, nanovg, stb
 cmake -S . -B build -G Ninja
 cmake --build build
 ./build/examples/hello/hello            # sokol demo
@@ -189,7 +226,7 @@ See [`docs/BUILDING.md`](docs/BUILDING.md) for platform-specific notes.
 ```
 include/affineui/      ← public headers; affineui.h is the umbrella
 src/                   ← implementation
-external/              ← vendored single-file deps (fetched by script)
+external/              ← checked-in vendored deps
 examples/              ← runnable demos (each in its own dir)
 tests/                 ← doctest unit tests
 docs/                  ← architecture, design, contributor docs

@@ -202,6 +202,16 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
             if (parse_hex_color(&v->color, rgba)) s.animated.border_rgba = rgba;
             break;
         }
+        case LXB_CSS_PROPERTY_BORDER_TOP_COLOR:
+        case LXB_CSS_PROPERTY_BORDER_RIGHT_COLOR:
+        case LXB_CSS_PROPERTY_BORDER_BOTTOM_COLOR:
+        case LXB_CSS_PROPERTY_BORDER_LEFT_COLOR: {
+            const auto* v =
+                static_cast<const lxb_css_value_color_t*>(d->u.user);
+            std::uint32_t rgba;
+            if (parse_hex_color(v, rgba)) s.animated.border_rgba = rgba;
+            break;
+        }
         // ── Box model: padding / margin ────────────────────────────
         // The `padding` and `margin` shorthands deliver a struct with
         // four sides; longhands deliver just the side's length-

@@ -33,6 +33,26 @@ struct Rect {
 
 enum class MouseButton : std::uint8_t { Left, Right, Middle };
 
+/// Platform-independent key code carried by KeyDown / KeyUp events.
+/// Only the keys AffineUI actively dispatches on are enumerated;
+/// printable characters arrive via EventType::TextInput. Adapters
+/// translate from their platform's native code (SAPP_KEYCODE_* /
+/// SDLK_*) into one of these. Unknown keys are reported as `Unknown`.
+enum class Key : std::uint16_t {
+    Unknown = 0,
+    Escape,
+    Tab,
+    Enter,
+    Backspace,
+    Delete,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
+    ArrowDown,
+    Home,
+    End,
+};
+
 enum class EventType : std::uint8_t {
     None,
     MouseMove,
@@ -53,7 +73,8 @@ struct Event {
     MouseButton button{MouseButton::Left};
     float       wheel_dx{0.0f};
     float       wheel_dy{0.0f};
-    int         key_code{0};
+    Key         key{Key::Unknown};
+    int         key_code{0};  // platform-native scancode (debug / passthrough)
     std::string text;  // valid for TextInput
 };
 

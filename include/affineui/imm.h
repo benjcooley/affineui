@@ -1,7 +1,9 @@
 #pragma once
 
-// Immediate-mode UI layer for AffineUI. Inspired by Dear ImGui's
-// call-site simplicity and React's reconciliation model.
+// Immediate-mode UI layer for AffineUI. The API is intentionally shaped
+// like Dear ImGui: ordinary C++ calls, stable call-site identity,
+// lightweight state, and event handlers close to the widget declaration.
+// Underneath, AffineUI reconciles that into a retained HTML/CSS DOM.
 //
 //   * View function ("component") describes the UI you *want*.
 //   * AffineUI diffs that against the previous tree and patches the

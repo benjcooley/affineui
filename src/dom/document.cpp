@@ -29,6 +29,7 @@
 #include "internal/style_store.h"
 #include "layout/yoga_adapter.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -99,23 +100,26 @@ struct CompoundSelector {
 };
 
 struct PseudoRule {
-    enum class Pseudo : std::uint8_t { Hover, Active };
+    enum class Pseudo : std::uint8_t { Hover, Active, Focus };
     Pseudo                                        pseudo;
     CompoundSelector                              target;
     std::vector<CompoundSelector>                 ancestors;  // nearest → root
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
-// Lexbor 2.4 doesn't expose `border-radius`, `border-color`, `gap`,
-// or `background` (shorthand) — declarations for these are silently
-// dropped at parse time. RuleFill carries the values we recover via a
-// raw-text pre-scan of each attached stylesheet, keyed by the same
-// CompoundSelector chain we use for pseudo overlays. Applied after
-// the base resolve but before inline-style scans (which still win,
-// matching CSS specificity for `style=""`).
+// Lexbor 2.4 exposes `border` and the side-specific
+// `border-*-color` longhands, but not the `border-color` shorthand;
+// it also lacks `border-radius`, `gap`, and `background` shorthand
+// support. RuleFill carries values we recover via a raw-text pre-scan
+// of each attached stylesheet, keyed by the same CompoundSelector
+// chain we use for pseudo overlays. Applied after the base resolve
+// but before inline-style scans (which still win, matching CSS
+// specificity for `style=""`).
 struct RuleFill {
     CompoundSelector              target;
     std::vector<CompoundSelector> ancestors;
+    lxb_css_selector_specificity_t specificity{0};
+    std::uint32_t                 source_order{0};
     // Per-corner border-radius after applying CSS pairing. Valid only
     // when has_border_radius is true; otherwise all four are -1.
     int                           border_radius_tl_px{-1};
@@ -129,12 +133,18 @@ struct RuleFill {
     std::string                   font_family;            // empty = unset
     bool                          has_border_color{false};
     bool                          has_background{false};
+    // When non-zero, this fill is gated on the named pseudo-class
+    // state bit (kHoverStateBit / kActiveStateBit / kFocusStateBit)
+    // being set on the matched element. Lets the gap-fill scanner
+    // recover properties from selectors like `.btn:focus { ... }`
+    // that lexbor parses but whose declarations it silently drops.
+    std::uint8_t                  state_bit{0};
 };
 
-// Per-element state bits in StyleStore::state_bits(). :focus claims
-// bit 2 later when keyboard routing lands.
+// Per-element state bits in StyleStore::state_bits().
 constexpr std::uint8_t kHoverStateBit  = 1u << 0;
 constexpr std::uint8_t kActiveStateBit = 1u << 1;
+constexpr std::uint8_t kFocusStateBit  = 1u << 2;
 #endif
 
 }  // namespace
@@ -158,6 +168,7 @@ struct DocumentImpl {
     // affected element.
     int                       hovered_idx{-1};
     int                       active_idx{-1};
+    int                       focused_idx{-1};
     std::vector<int>          hovered_chain;
     std::vector<int>          active_chain;
     Point                     last_mouse_pos{};
@@ -178,9 +189,9 @@ struct DocumentImpl {
     // during attach. Pointers in `decls` reference rule data owned by
     // the document's CSS memory pool; valid for the document's lifetime.
     std::vector<PseudoRule>            pseudo_rules;
-    // Gap-fill rules carrying values for properties lexbor 2.4 drops
-    // (border-radius, border-color). Populated by scan_rule_fills()
-    // from the raw CSS source at attach time.
+    // Gap-fill rules carrying values for missing shorthand/property
+    // support in lexbor 2.4. Populated by scan_rule_fills() from the
+    // raw CSS source at attach time.
     std::vector<RuleFill>              rule_fills;
     std::unique_ptr<StyleResolver>     resolver;
     ResolvedStyle                      root_style{};  // inheritance root
@@ -410,6 +421,9 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
                         case LXB_CSS_SELECTOR_PSEUDO_CLASS_ACTIVE:
                             pseudo = PseudoRule::Pseudo::Active;
                             has_pseudo = true; pseudo_seen_in_last = true; break;
+                        case LXB_CSS_SELECTOR_PSEUDO_CLASS_FOCUS:
+                            pseudo = PseudoRule::Pseudo::Focus;
+                            has_pseudo = true; pseudo_seen_in_last = true; break;
                         default:
                             ok = false; break;
                     }
@@ -460,15 +474,15 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
 
 // ── Gap-fill scanner: properties lexbor 2.4 silently drops ────────
 //
-// `border-radius` and `border-color` are absent from lexbor's CSS
-// module — declarations using them parse but the values vanish. We
-// recover them with a small dedicated scanner over the original CSS
-// source. The scanner builds a side-table (RuleFill) of selector +
-// extracted values that the cascade overlay applies after the base
-// resolve. Selector grammar matches what scan_pseudo_rules supports:
-// simple selectors (tag / class / id) AND'd in compounds, compounds
-// joined by descendant combinator. Anything richer is silently
-// skipped at scan time.
+// `border-radius`, `gap`, `background` shorthand, and the
+// `border-color` shorthand are not represented in lexbor's declaration
+// list for the version we vendor. We recover those specific values with
+// a small scanner over the original CSS source. The scanner builds a
+// side-table (RuleFill) of selector + extracted values that the cascade
+// overlay applies after the base resolve. Selector grammar matches what
+// scan_pseudo_rules supports: simple selectors (tag / class / id) AND'd
+// in compounds, compounds joined by descendant combinator. Anything
+// richer is skipped at scan time.
 
 // ASCII-only whitespace test we use throughout (CSS is ASCII for
 // our purposes). Avoids std::isspace pulling in locale.
@@ -544,22 +558,29 @@ std::vector<RawRule> split_css_rules(std::string_view src) {
     return out;
 }
 
-// Parse a static (no pseudo, no `>` / `+` / `~`, no attribute selector)
-// selector text into a target compound + ancestor chain matching the
-// shape scan_pseudo_rules builds. Returns false on anything we don't
-// support (the rule's other properties still apply through lexbor;
-// we just won't fill the missing ones).
+// Parse a static (no `>` / `+` / `~`, no attribute selector) selector
+// text into a target compound + ancestor chain matching the shape
+// scan_pseudo_rules builds. A single trailing pseudo-class
+// (:hover / :active / :focus) on the last compound is allowed and
+// returned via `out_state_bit`; any other pseudo (including anywhere
+// but the last compound) causes a parse failure. Returns false on
+// anything we don't support (the rule's other properties still apply
+// through lexbor; we just won't fill the missing ones).
 bool parse_static_selector(std::string_view sel,
                            CompoundSelector& target,
-                           std::vector<CompoundSelector>& ancestors) {
+                           std::vector<CompoundSelector>& ancestors,
+                           std::uint8_t& out_state_bit) {
     target = {};
     ancestors.clear();
+    out_state_bit = 0;
 
     std::vector<CompoundSelector> compounds;
+    bool pseudo_seen = false;
     std::size_t i = 0;
     while (i < sel.size()) {
         while (i < sel.size() && is_css_ws(sel[i])) ++i;
         if (i >= sel.size()) break;
+        if (pseudo_seen) return false;  // pseudo must be on last compound
         CompoundSelector compound;
         // Optional leading tag (anything not starting with . # or :).
         if (sel[i] != '.' && sel[i] != '#' && sel[i] != ':') {
@@ -570,9 +591,23 @@ bool parse_static_selector(std::string_view sel,
             compound.simples.push_back(
                 {SimpleSelector::Kind::Tag, std::string(sel.substr(s, i - s))});
         }
-        // Then any number of `.name` / `#name` segments.
+        // Then any number of `.name` / `#name` segments, optionally
+        // followed by a single `:pseudo` recognized below.
         while (i < sel.size() && !is_css_ws(sel[i])) {
-            if (sel[i] == ':') return false;  // pseudo — out of scope
+            if (sel[i] == ':') {
+                if (pseudo_seen) return false;
+                ++i;
+                const std::size_t s = i;
+                while (i < sel.size() && sel[i] != '.' && sel[i] != '#' &&
+                       sel[i] != ':' && !is_css_ws(sel[i])) ++i;
+                const auto name = sel.substr(s, i - s);
+                if      (name == "hover")  out_state_bit = kHoverStateBit;
+                else if (name == "active") out_state_bit = kActiveStateBit;
+                else if (name == "focus")  out_state_bit = kFocusStateBit;
+                else return false;  // unsupported pseudo
+                pseudo_seen = true;
+                continue;
+            }
             if (sel[i] != '.' && sel[i] != '#') return false;
             const auto kind = (sel[i] == '.')
                 ? SimpleSelector::Kind::Class
@@ -747,12 +782,29 @@ std::string find_decl_first_ident(std::string_view decls,
     return {};
 }
 
-// Walk the raw CSS source for each rule's `border-radius` and
-// `border-color` declarations. For rules whose selector(s) parse as
-// static (no pseudo / no advanced combinators), append a RuleFill
-// entry per comma-separated group.
-void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
+// Walk the raw CSS source for each rule's missing-property declarations.
+// For rules whose selector(s) parse as static (no pseudo / no advanced
+// combinators), append a RuleFill entry per comma-separated group.
+void scan_rule_fills(lxb_css_stylesheet_t* sst,
+                     std::string_view css,
+                     std::vector<RuleFill>& out) {
+    std::vector<const lxb_css_rule_style_t*> parsed_styles;
+    if (sst && sst->root) {
+        auto* rule_list = lxb_css_rule_list(sst->root);
+        for (auto* r = rule_list->first; r != nullptr; r = r->next) {
+            if (r->type != LXB_CSS_RULE_STYLE) continue;
+            parsed_styles.push_back(lxb_css_rule_style(r));
+        }
+    }
+
+    std::size_t raw_rule_index = 0;
     for (const auto& raw : split_css_rules(css)) {
+        const lxb_css_rule_style_t* parsed_style =
+            raw_rule_index < parsed_styles.size()
+                ? parsed_styles[raw_rule_index]
+                : nullptr;
+        ++raw_rule_index;
+
         int radii[4] = {-1, -1, -1, -1};
         int radius_count = 0;
         const bool has_radius =
@@ -790,18 +842,26 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
         // Each comma-separated group becomes its own RuleFill.
         std::string_view sel_text = trim_css_ws(raw.selector);
         std::size_t s = 0;
+        const lxb_css_selector_list_t* parsed_selector =
+            parsed_style ? parsed_style->selector : nullptr;
         while (s <= sel_text.size()) {
             const auto comma = sel_text.find(',', s);
             const auto group = trim_css_ws(sel_text.substr(s,
                 (comma == std::string_view::npos
                      ? sel_text.size() : comma) - s));
+            const lxb_css_selector_specificity_t specificity =
+                parsed_selector ? parsed_selector->specificity : 0;
             if (!group.empty()) {
                 CompoundSelector target;
                 std::vector<CompoundSelector> ancestors;
-                if (parse_static_selector(group, target, ancestors)) {
+                std::uint8_t state_bit = 0;
+                if (parse_static_selector(group, target, ancestors, state_bit)) {
                     RuleFill rf;
                     rf.target               = std::move(target);
                     rf.ancestors            = std::move(ancestors);
+                    rf.specificity          = specificity;
+                    rf.source_order         =
+                        static_cast<std::uint32_t>(out.size());
                     rf.border_radius_tl_px  = r_tl;
                     rf.border_radius_tr_px  = r_tr;
                     rf.border_radius_br_px  = r_br;
@@ -813,13 +873,22 @@ void scan_rule_fills(std::string_view css, std::vector<RuleFill>& out) {
                     rf.background_rgba      = bg.first;
                     rf.has_background       = bg.second;
                     rf.font_family          = ff;
+                    rf.state_bit            = state_bit;
                     out.push_back(std::move(rf));
                 }
             }
             if (comma == std::string_view::npos) break;
             s = comma + 1;
+            if (parsed_selector) parsed_selector = parsed_selector->next;
         }
     }
+
+    std::stable_sort(out.begin(), out.end(),
+        [](const RuleFill& a, const RuleFill& b) {
+            if (a.specificity != b.specificity)
+                return a.specificity < b.specificity;
+            return a.source_order < b.source_order;
+        });
 }
 
 void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
@@ -842,7 +911,7 @@ void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
         // owned by impl_, author CSS is a local that's destroyed
         // when set_html returns — but we extract everything we need
         // into RuleFill values here, which copy by value).
-        scan_rule_fills(css, impl.rule_fills);
+        scan_rule_fills(sst, css, impl.rule_fills);
     } else {
         lxb_css_stylesheet_destroy(sst, true);
     }
@@ -1020,9 +1089,13 @@ void collect_blocks(detail::DocumentImpl& impl,
 
         if (sb_at_collect != 0 && !impl.pseudo_rules.empty()) {
             for (const auto& pr : impl.pseudo_rules) {
-                const std::uint8_t bit =
-                    (pr.pseudo == PseudoRule::Pseudo::Hover)
-                        ? kHoverStateBit : kActiveStateBit;
+                std::uint8_t bit;
+                switch (pr.pseudo) {
+                    case PseudoRule::Pseudo::Hover:  bit = kHoverStateBit;  break;
+                    case PseudoRule::Pseudo::Active: bit = kActiveStateBit; break;
+                    case PseudoRule::Pseudo::Focus:  bit = kFocusStateBit;  break;
+                    default: continue;
+                }
                 if (!(sb_at_collect & bit)) continue;
                 if (!compound_matches(pr.target, tag, elem_id_attr, cls_attr))
                     continue;
@@ -1032,12 +1105,15 @@ void collect_blocks(detail::DocumentImpl& impl,
             }
         }
 
-        // Gap-fill overlay: properties lexbor 2.4 drops at parse time
-        // (border-radius, border-color) recovered from the CSS source.
+        // Gap-fill overlay: missing shorthand/property support recovered
+        // from the CSS source.
         // Same selector grammar as pseudo overlay; later rules win
         // (the scan is in attach order, which matches CSS source
         // order).
         for (const auto& rf : impl.rule_fills) {
+            // Pseudo-scoped fills only apply when the state bit is set.
+            // Unscoped fills (state_bit == 0) always apply.
+            if (rf.state_bit && !(sb_at_collect & rf.state_bit)) continue;
             if (!compound_matches(rf.target, tag, elem_id_attr, cls_attr))
                 continue;
             if (!ancestor_chain_matches(rf.ancestors, parent_idx,
@@ -1188,6 +1264,7 @@ void Document::set_html(std::string_view html) {
     impl_->hovered_chain.clear();
     impl_->active_chain.clear();
     impl_->active_idx = -1;
+    impl_->focused_idx = -1;
     if (impl_->doc) {
         lxb_html_document_destroy(impl_->doc);
         impl_->doc = nullptr;
@@ -1630,8 +1707,13 @@ void apply_pseudo_overlay(detail::DocumentImpl& impl, const Block& block,
     const auto sb = impl.style_store.state_bits(block.id);
     if (sb == 0) return;
     for (const auto& pr : impl.pseudo_rules) {
-        const std::uint8_t bit = (pr.pseudo == PseudoRule::Pseudo::Hover)
-            ? kHoverStateBit : kActiveStateBit;
+        std::uint8_t bit;
+        switch (pr.pseudo) {
+            case PseudoRule::Pseudo::Hover:  bit = kHoverStateBit;  break;
+            case PseudoRule::Pseudo::Active: bit = kActiveStateBit; break;
+            case PseudoRule::Pseudo::Focus:  bit = kFocusStateBit;  break;
+            default: continue;
+        }
         if (!(sb & bit)) continue;
         if (!compound_matches(pr.target, block.tag, block.elem_id,
                               block.classes)) continue;
@@ -1653,10 +1735,14 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
     auto rs     = impl.resolver->resolve(elem, parent);
     apply_pseudo_overlay(impl, block, rs);
     // Re-apply gap-fill overlay too — restyle_block runs on the
-    // dispatch path (hover/active toggles), so the bg-color from a
-    // pseudo rule needs to coexist with the rule-block border-color
-    // and border-radius the same way collect_blocks layers them.
+    // dispatch path (hover/active/focus toggles), so the bg-color
+    // from a pseudo rule needs to coexist with the rule-block
+    // border-color and border-radius the same way collect_blocks
+    // layers them. Pseudo-scoped fills (e.g. `.btn:focus { ... }`
+    // border-color) gate on the matching state bit being set.
+    const auto sb_rs = impl.style_store.state_bits(block.id);
     for (const auto& rf : impl.rule_fills) {
+        if (rf.state_bit && !(sb_rs & rf.state_bit)) continue;
         if (!compound_matches(rf.target, block.tag, block.elem_id, block.classes))
             continue;
         if (!ancestor_chain_matches(rf.ancestors, block.parent_idx, impl.blocks))
@@ -1730,6 +1816,51 @@ bool refresh_active_chain(detail::DocumentImpl& impl) {
                                 impl.active_idx, kActiveStateBit);
 }
 
+// Move :focus to `target_idx` (use -1 to clear). Toggles the focus
+// state bit on the leaving and entering elements, restyles each so
+// the :focus overlay takes effect on the next paint, and records the
+// new focused element. Unlike :hover / :active, focus is a single
+// element rather than a chain — there is no inheritance up the
+// ancestor list.
+bool set_focus(detail::DocumentImpl& impl, int target_idx) {
+    if (target_idx == impl.focused_idx) return false;
+    const int old_idx = impl.focused_idx;
+    impl.focused_idx  = target_idx;
+    if (old_idx >= 0 && old_idx < static_cast<int>(impl.blocks.size())) {
+        const auto id = impl.blocks[static_cast<std::size_t>(old_idx)].id;
+        impl.style_store.state_bits(id) &= static_cast<std::uint8_t>(~kFocusStateBit);
+        restyle_block(impl, old_idx);
+    }
+    if (target_idx >= 0 && target_idx < static_cast<int>(impl.blocks.size())) {
+        const auto id = impl.blocks[static_cast<std::size_t>(target_idx)].id;
+        impl.style_store.state_bits(id) |= kFocusStateBit;
+        restyle_block(impl, target_idx);
+    }
+    return true;
+}
+
+// Walk up from `idx` looking for the nearest focusable element. A tag
+// is focusable if it natively accepts keyboard input today — buttons,
+// inputs, textareas, selects, and <a href>. Returns -1 when no such
+// ancestor exists; callers should treat that as "click outside any
+// focusable element → clear focus".
+int focusable_ancestor(const detail::DocumentImpl& impl, int idx) {
+    while (idx >= 0) {
+        const auto& b = impl.blocks[static_cast<std::size_t>(idx)];
+        const auto& t = b.tag;
+        if (t == "button" || t == "input" || t == "textarea" ||
+            t == "select") {
+            return idx;
+        }
+        if (t == "a") {
+            auto* elem = impl.style_store.element_of(b.id);
+            if (elem && !attr_string(elem, "href").empty()) return idx;
+        }
+        idx = b.parent_idx;
+    }
+    return -1;
+}
+
 // True iff this block accepts scroll input on its Y axis.
 bool block_is_scrollable_y(const detail::DocumentImpl& impl, int idx) {
     if (idx < 0) return false;
@@ -1752,6 +1883,8 @@ int find_scrollable_y_ancestor(const detail::DocumentImpl& impl, int idx) {
 #else  // stub build — no DOM, no pseudo / scroll bookkeeping
 bool refresh_hover_chain(detail::DocumentImpl&)  { return false; }
 bool refresh_active_chain(detail::DocumentImpl&) { return false; }
+bool set_focus(detail::DocumentImpl&, int)       { return false; }
+int  focusable_ancestor(const detail::DocumentImpl&, int) { return -1; }
 int  find_scrollable_y_ancestor(const detail::DocumentImpl&, int) { return -1; }
 #endif
 }  // namespace
@@ -1784,7 +1917,13 @@ DispatchResult Document::dispatch(const Event& ev) {
             impl_->active_idx     = impl_->hovered_idx;
             const bool h = refresh_hover_chain(*impl_);
             const bool a = refresh_active_chain(*impl_);
-            if (h || a) result.redraw_requested = true;
+            // Focus moves to the nearest focusable ancestor of whatever
+            // the press landed on. Clicking blank space (no focusable
+            // ancestor) clears focus, matching browser behavior for
+            // mousedown outside any form control.
+            const int target = focusable_ancestor(*impl_, impl_->hovered_idx);
+            const bool f = set_focus(*impl_, target);
+            if (h || a || f) result.redraw_requested = true;
             break;
         }
         case EventType::MouseUp: {
@@ -1801,6 +1940,16 @@ DispatchResult Document::dispatch(const Event& ev) {
             break;
         }
 #if !defined(AFFINEUI_STUB_BUILD)
+        case EventType::KeyDown: {
+            // ESC clears focus, matching the convention browsers use for
+            // dismissing a focused control. Other keys are dropped for
+            // now — text-input behavior (typing into <input>, caret,
+            // IME) is a later thread.
+            if (ev.key == Key::Escape) {
+                if (set_focus(*impl_, -1)) result.redraw_requested = true;
+            }
+            break;
+        }
         case EventType::MouseWheel: {
             // Route to the nearest scrollable-Y ancestor of whatever
             // the pointer is over. Convention: positive wheel_dy
@@ -1940,6 +2089,7 @@ void Document::tick_imm() {
     //    after re-collect, leaving rows stuck on hover style.)
     impl_->hovered_idx   = -1;
     impl_->active_idx    = -1;
+    impl_->focused_idx   = -1;
     impl_->hovered_chain.clear();
     impl_->active_chain.clear();
     impl_->content_size = Size{0, 0};   // forces relayout in Renderer
