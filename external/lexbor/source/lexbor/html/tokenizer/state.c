@@ -17,8 +17,10 @@
 #include "lexbor/core/str_res.h"
 #include "lexbor/core/swar.h"
 
+#if !defined(LXB_HTML_TOKENIZER_BASIC_ENTITIES)
 #define LXB_HTML_TOKENIZER_RES_ENTITIES_SBST
 #include "lexbor/html/tokenizer/res.h"
+#endif
 
 
 const lxb_tag_data_t *
@@ -1767,7 +1769,11 @@ _lxb_html_tokenizer_state_char_ref(lxb_html_tokenizer_t *tkz,
 {
     /* ASCII alphanumeric */
     if (lexbor_str_res_alphanumeric_character[ *data ] != LEXBOR_STR_RES_SLIP) {
+#if defined(LXB_HTML_TOKENIZER_BASIC_ENTITIES)
+        tkz->entity = NULL;
+#else
         tkz->entity = &lxb_html_tokenizer_res_entities_sbst[1];
+#endif
         tkz->entity_match = NULL;
         tkz->entity_start = (tkz->pos - 1) - tkz->start;
 
@@ -1806,6 +1812,130 @@ lxb_html_tokenizer_state_char_ref_named(lxb_html_tokenizer_t *tkz,
                                         const lxb_char_t *data,
                                         const lxb_char_t *end)
 {
+#if defined(LXB_HTML_TOKENIZER_BASIC_ENTITIES)
+    typedef struct {
+        const lxb_char_t *name;
+        size_t name_len;
+        const lxb_char_t *value;
+        size_t value_len;
+        bool semicolon_optional;
+    }
+    lxb_html_tokenizer_basic_entity_t;
+
+#define LXB_HTML_BASIC_ENTITY(name, value, optional)                           \
+    { (const lxb_char_t *) name, sizeof(name) - 1,                            \
+      (const lxb_char_t *) value, sizeof(value) - 1, optional }
+
+    static const lxb_html_tokenizer_basic_entity_t entities[] = {
+        LXB_HTML_BASIC_ENTITY("amp", "&", true),
+        LXB_HTML_BASIC_ENTITY("lt", "<", true),
+        LXB_HTML_BASIC_ENTITY("gt", ">", true),
+        LXB_HTML_BASIC_ENTITY("quot", "\"", true),
+        LXB_HTML_BASIC_ENTITY("apos", "'", false),
+        LXB_HTML_BASIC_ENTITY("nbsp", "\xC2\xA0", true),
+        LXB_HTML_BASIC_ENTITY("copy", "\xC2\xA9", true),
+        LXB_HTML_BASIC_ENTITY("reg", "\xC2\xAE", true),
+        LXB_HTML_BASIC_ENTITY("trade", "\xE2\x84\xA2", true),
+        LXB_HTML_BASIC_ENTITY("times", "\xC3\x97", true),
+        LXB_HTML_BASIC_ENTITY("mdash", "\xE2\x80\x94", true),
+        LXB_HTML_BASIC_ENTITY("ndash", "\xE2\x80\x93", true),
+        LXB_HTML_BASIC_ENTITY("hellip", "\xE2\x80\xA6", true),
+        LXB_HTML_BASIC_ENTITY("lsquo", "\xE2\x80\x98", true),
+        LXB_HTML_BASIC_ENTITY("rsquo", "\xE2\x80\x99", true),
+        LXB_HTML_BASIC_ENTITY("ldquo", "\xE2\x80\x9C", true),
+        LXB_HTML_BASIC_ENTITY("rdquo", "\xE2\x80\x9D", true),
+        LXB_HTML_BASIC_ENTITY("bull", "\xE2\x80\xA2", true),
+        LXB_HTML_BASIC_ENTITY("middot", "\xC2\xB7", true)
+    };
+
+#undef LXB_HTML_BASIC_ENTITY
+
+    const lxb_html_tokenizer_basic_entity_t *match = NULL;
+    lxb_char_t *start = &tkz->start[tkz->entity_start];
+    const lxb_char_t *name = start + 1;
+    size_t name_len;
+    bool semicolon = false;
+
+    while (data < end) {
+        bool has_prefix = false;
+        size_t next_len = (size_t) ((tkz->pos - name) + 1);
+
+        for (size_t i = 0; i < sizeof(entities) / sizeof(entities[0]); i++) {
+            if (next_len <= entities[i].name_len
+                && memcmp(name, entities[i].name, next_len - 1) == 0
+                && entities[i].name[next_len - 1] == *data)
+            {
+                has_prefix = true;
+                break;
+            }
+
+            if (next_len == entities[i].name_len + 1
+                && *data == 0x3B
+                && memcmp(name, entities[i].name, entities[i].name_len) == 0)
+            {
+                has_prefix = true;
+                break;
+            }
+        }
+
+        if (!has_prefix) {
+            break;
+        }
+
+        lxb_html_tokenizer_state_append_m(tkz, data, 1);
+        data++;
+    }
+
+    if (data == end) {
+        return data;
+    }
+
+    name_len = (size_t) (tkz->pos - name);
+
+    for (size_t i = 0; i < sizeof(entities) / sizeof(entities[0]); i++) {
+        if (name_len == entities[i].name_len
+            && entities[i].semicolon_optional
+            && memcmp(name, entities[i].name, name_len) == 0)
+        {
+            match = &entities[i];
+            break;
+        }
+
+        if (name_len == entities[i].name_len + 1
+            && name[entities[i].name_len] == 0x3B
+            && memcmp(name, entities[i].name, entities[i].name_len) == 0)
+        {
+            match = &entities[i];
+            semicolon = true;
+            break;
+        }
+    }
+
+    if (match == NULL) {
+        tkz->state = lxb_html_tokenizer_state_char_ref_ambiguous_ampersand;
+        return data;
+    }
+
+    tkz->state = tkz->state_return;
+
+    if (tkz->is_attribute && !semicolon) {
+        if (*data == 0x3D
+            || lexbor_str_res_alphanumeric_character[*data] != LEXBOR_STR_RES_SLIP)
+        {
+            return data;
+        }
+    }
+
+    if (!semicolon) {
+        lxb_html_tokenizer_error_add(tkz->parse_errors, data,
+                                     LXB_HTML_TOKENIZER_ERROR_MISEAFCHRE);
+    }
+
+    memcpy(start, match->value, match->value_len);
+    tkz->pos = start + match->value_len;
+
+    return data;
+#else
     size_t size, tail_size;
     lxb_char_t *start;
     const lexbor_sbst_entry_static_t *entry = tkz->entity;
@@ -1892,6 +2022,7 @@ done:
     tkz->pos = start + (tkz->entity_match->value_len + tail_size);
 
     return data;
+#endif
 }
 
 /*

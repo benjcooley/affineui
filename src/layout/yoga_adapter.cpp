@@ -156,9 +156,9 @@ void apply_style(YGNodeRef node, const ComputedStyle& cs,
     if (intrinsic_h > 0) {
         YGNodeStyleSetHeight(node, static_cast<float>(intrinsic_h));
     }
-    // intrinsic_w currently unused — kept in the input shape for the
-    // future "auto-width content" case (`width: max-content`, etc.).
-    (void)intrinsic_w;
+    if (intrinsic_w > 0) {
+        YGNodeStyleSetWidth(node, static_cast<float>(intrinsic_w));
+    }
 
     // Min/max sizing from ComputedStyle (sentinel -1 means "unset" —
     // skip).

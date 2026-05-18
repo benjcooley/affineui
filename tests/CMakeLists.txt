@@ -12,6 +12,7 @@ add_executable(affineui_tests
     test_main.cpp
     test_version.cpp
     test_document.cpp
+    test_bootstrap.cpp
     test_imm_callsite.cpp
     test_imm_runtime.cpp
     test_cascade.cpp
@@ -26,6 +27,9 @@ target_link_libraries(affineui_tests PRIVATE
 # public API doesn't expose ComputedStyle by design.
 target_include_directories(affineui_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_definitions(affineui_tests PRIVATE
+    AFFINEUI_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 if(AFFINEUI_DEPS_AVAILABLE)
     target_include_directories(affineui_tests SYSTEM PRIVATE

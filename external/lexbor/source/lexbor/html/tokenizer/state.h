@@ -76,7 +76,8 @@ extern "C" {
                                                                                \
         attr->value_size = (size_t) (tkz->pos - tkz->start);                   \
                                                                                \
-        attr->value = lexbor_mraw_alloc(tkz->attrs_mraw, attr->value_size + 1);\
+        attr->value = (lxb_char_t *) lexbor_mraw_alloc(tkz->attrs_mraw,       \
+                                                       attr->value_size + 1);  \
         if (attr->value == NULL) {                                             \
             tkz->status = LXB_STATUS_ERROR_MEMORY_ALLOCATION;                  \
             return end;                                                        \

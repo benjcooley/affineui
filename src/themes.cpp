@@ -13,13 +13,12 @@ std::string_view ua_default() {
         // Minimal user-agent baseline. Mirrors the parts of the HTML5
         // default stylesheet we actually depend on.
         //
-        // Body gets a 24px padding by default so simple pages have a
-        // sensible page-gutter without authoring CSS. Demos that want
-        // edge-to-edge content (a Bootstrap-style navbar, for
-        // example) override with `body { padding: 0 }`.
+        // Browser-compatible defaults. Page gutters are author CSS,
+        // not user-agent CSS; frameworks such as Bootstrap assume
+        // body padding starts at zero.
         "html,body{margin:0;padding:0}"
         "body{font-family:sans-serif;font-size:16px;line-height:1.5;"
-        "color:#1f2328;background:#ffffff;padding:24px}"
+        "color:#1f2328;background:#ffffff}"
         "h1{font-size:2em;margin:.67em 0}"
         "h2{font-size:1.5em;margin:.75em 0}"
         "h3{font-size:1.17em;margin:.83em 0}"
@@ -29,6 +28,7 @@ std::string_view ua_default() {
         "strong,b{font-weight:bold}"
         "em,i{font-style:italic}"
         "ul,ol{padding-left:40px;margin:1em 0}"
+        "img{display:inline-block}"
         // Form controls default to inline-block (HTML5 UA stylesheet).
         "button,input,select,textarea{font:inherit;display:inline-block}"
         // Phrasing elements default to inline so they flow with other

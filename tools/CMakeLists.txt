@@ -28,6 +28,8 @@ if(Python3_Interpreter_FOUND)
     set(_amalg_outdir "${CMAKE_BINARY_DIR}/dist")
     set(_amalg_h      "${_amalg_outdir}/affineui.h")
     set(_amalg_cpp    "${_amalg_outdir}/affineui.cpp")
+    set(_lexbor_cpp_script "${CMAKE_CURRENT_SOURCE_DIR}/lexbor_cpp_compat.py")
+    set(_lexbor_cpp_outdir "${CMAKE_BINARY_DIR}/lexbor-cpp")
 
     # Glob the inputs that feed the amalgamator so re-running it is
     # gated on actual source changes. CONFIGURE_DEPENDS makes Ninja
@@ -37,6 +39,13 @@ if(Python3_Interpreter_FOUND)
         "${CMAKE_SOURCE_DIR}/src/*.h"
         "${CMAKE_SOURCE_DIR}/src/*.cpp"
         "${CMAKE_SOURCE_DIR}/src/*.c"
+        "${CMAKE_SOURCE_DIR}/external/lexbor/source/lexbor/*.h"
+        "${CMAKE_SOURCE_DIR}/external/lexbor/source/lexbor/*.c"
+        "${CMAKE_SOURCE_DIR}/external/yoga/yoga/*.h"
+        "${CMAKE_SOURCE_DIR}/external/yoga/yoga/*.cpp"
+        "${CMAKE_SOURCE_DIR}/external/nanovg/src/*.h"
+        "${CMAKE_SOURCE_DIR}/external/nanovg/src/*.c"
+        "${CMAKE_SOURCE_DIR}/external/sokol/*.h"
     )
 
     add_custom_command(
@@ -44,13 +53,26 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" "${_amalg_script}"
                 --root "${CMAKE_SOURCE_DIR}"
                 --out  "${_amalg_outdir}"
-        DEPENDS "${_amalg_script}" ${_amalg_inputs}
+                --cxx "${CMAKE_CXX_COMPILER}"
+        DEPENDS "${_amalg_script}" "${_lexbor_cpp_script}" ${_amalg_inputs}
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "Producing affineui.h + affineui.cpp two-file release"
         VERBATIM
     )
 
     add_custom_target(amalgamate DEPENDS "${_amalg_h}" "${_amalg_cpp}")
+
+    add_custom_target(lexbor_cpp_check
+        COMMAND "${Python3_EXECUTABLE}" "${_lexbor_cpp_script}"
+                --root "${CMAKE_SOURCE_DIR}"
+                --out  "${_lexbor_cpp_outdir}"
+                --check
+                --cxx "${CMAKE_CXX_COMPILER}"
+        DEPENDS "${_lexbor_cpp_script}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Generating Lexbor C++ compatibility tree and compiling it"
+        VERBATIM
+    )
 else()
     message(STATUS "Python3 interpreter not found; `amalgamate` target disabled")
 endif()

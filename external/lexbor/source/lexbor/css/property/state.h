@@ -39,6 +39,9 @@ LXB_API bool
 lxb_css_property_state_box_sizing(lxb_css_parser_t *parser,
                                   const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
+lxb_css_property_state_box_shadow(lxb_css_parser_t *parser,
+                                  const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
 lxb_css_property_state_min_width(lxb_css_parser_t *parser,
                                  const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
@@ -81,6 +84,15 @@ LXB_API bool
 lxb_css_property_state_padding_left(lxb_css_parser_t *parser,
                                     const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
+lxb_css_property_state_gap(lxb_css_parser_t *parser,
+                           const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_row_gap(lxb_css_parser_t *parser,
+                               const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_column_gap(lxb_css_parser_t *parser,
+                                  const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
 lxb_css_property_state_border(lxb_css_parser_t *parser,
                               const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
@@ -96,6 +108,9 @@ LXB_API bool
 lxb_css_property_state_border_left(lxb_css_parser_t *parser,
                                    const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
+lxb_css_property_state_border_color(lxb_css_parser_t *parser,
+                                    const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
 lxb_css_property_state_border_top_color(lxb_css_parser_t *parser,
                                         const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
@@ -107,6 +122,24 @@ lxb_css_property_state_border_bottom_color(lxb_css_parser_t *parser,
 LXB_API bool
 lxb_css_property_state_border_left_color(lxb_css_parser_t *parser,
                                          const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_border_radius(lxb_css_parser_t *parser,
+                                     const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_border_top_left_radius(lxb_css_parser_t *parser,
+                                              const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_border_top_right_radius(lxb_css_parser_t *parser,
+                                               const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_border_bottom_right_radius(lxb_css_parser_t *parser,
+                                                  const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_border_bottom_left_radius(lxb_css_parser_t *parser,
+                                                 const lxb_css_syntax_token_t *token, void *ctx);
+LXB_API bool
+lxb_css_property_state_background(lxb_css_parser_t *parser,
+                                  const lxb_css_syntax_token_t *token, void *ctx);
 LXB_API bool
 lxb_css_property_state_background_color(lxb_css_parser_t *parser,
                                         const lxb_css_syntax_token_t *token, void *ctx);

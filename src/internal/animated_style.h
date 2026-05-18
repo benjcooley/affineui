@@ -23,6 +23,13 @@ struct AnimatedStyle {
     std::uint32_t color_rgba           {0xFFFFFFFFu};  // foreground
     std::uint32_t background_rgba      {0x00000000u};
     std::uint32_t border_rgba          {0x00000000u};  // uniform border color
+    std::uint32_t shadow_rgba          {0x00000000u};
+
+    // ── Shadow geometry (8 bytes) ─────────────────────────────────
+    std::int16_t shadow_offset_x{0};
+    std::int16_t shadow_offset_y{0};
+    std::int16_t shadow_blur    {0};
+    std::int16_t shadow_spread  {0};
 
     // ── Transform (20 bytes) ──────────────────────────────────────
     // 2D affine: translate + scale + rotation. The full 3x2 matrix
@@ -36,9 +43,8 @@ struct AnimatedStyle {
     // ── Compositor (4 bytes) ──────────────────────────────────────
     float opacity{1.0f};
 
-    // Total: 12 + 20 + 4 = 36 bytes. The original 32-byte aspiration
-    // is gone now that borders carry a color; per-side border colors
-    // would push us to 48. Still well inside one cache line.
+    // Total: 16 + 8 + 20 + 4 = 48 bytes. Still well inside one cache
+    // line; per-side border colors would push us higher.
 };
 
 static_assert(sizeof(AnimatedStyle) <= 48,

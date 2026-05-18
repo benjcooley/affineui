@@ -1,6 +1,6 @@
 # AffineUI
 
-AffineUI is a GPU-accelerated HTML5/CSS browser layout and rendering
+AffineUI is a .cpp .h two source file zero dependency GPU-accelerated HTML5/CSS browser layout and rendering
 engine for C++ games, editors, tools, and other native projects.
 
 AffineUI focuses on support for the browser features modern CSS
@@ -8,6 +8,14 @@ component frameworks need to function: Bootstrap, Material UI,
 Tailwind-style utility systems, Ant-style component markup, and similar
 HTML/CSS UI libraries. The same runtime supports in-game UI, debug UI,
 editor panels, launchers, store panels, settings, and internal tooling.
+
+The checked-in [`examples/01_bootstrap`](examples/01_bootstrap) demo
+loads the real Bootstrap 4.6 CSS library and renders standard
+Bootstrap containers, navbars, cards, buttons, and pseudo-class states.
+Bootstrap JavaScript components will be mapped to native C++ behavior
+rather than browser JavaScript.
+
+![AffineUI rendering Bootstrap CSS](images/affineui_bootstrap.png)
 
 ## Adding AffineUI to Your Game
 
@@ -19,19 +27,27 @@ Download and add these two zero-dependency files to your project.
 Compile `affineui.cpp` once as C++20 and include `affineui.h` from
 your game code.
 
-Create `Hello.html` in your app's working directory:
+Place `bootstrap-4.6.2.min.css` next to `Hello.html`, then create this
+Bootstrap card:
 
 ```html
 <!doctype html>
 <html>
 <head>
-  <style>
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
-    main { font: 600 32px system-ui; color: white; }
-  </style>
+  <link rel="stylesheet" href="bootstrap-4.6.2.min.css">
 </head>
 <body>
-  <main>Hello from AffineUI</main>
+  <main class="container py-4">
+    <section class="card">
+      <div class="card-body">
+        <h1 class="card-title display-4">Hello from AffineUI</h1>
+        <p class="card-text">
+          Real Bootstrap CSS rendered inside your game.
+        </p>
+        <button class="btn btn-primary">Continue</button>
+      </div>
+    </section>
+  </main>
 </body>
 </html>
 ```
@@ -234,11 +250,16 @@ int main() {
 | `AFFINEUI_WITH_SOKOL` | Include the sokol_app adapter from `affineui.h`. |
 | `AFFINEUI_NO_IMM` | Omit the immediate-mode layer from the public header. |
 | `AFFINEUI_NO_C_API` | Omit the C ABI surface. |
+| `AFFINEUI_HTML_ENTITIES_FULL` | Enable Lexbor's full HTML5 named character entity table. Default builds use a compact common-entity table. |
 | `AFFINEUI_HOST_PROVIDES_SOKOL` | Do not emit sokol implementation symbols. |
 | `AFFINEUI_HOST_PROVIDES_NANOVG` | Do not emit NanoVG implementation symbols. |
 | `AFFINEUI_HOST_PROVIDES_STB_IMAGE` | Do not emit stb_image implementation symbols. |
 | `AFFINEUI_HOST_PROVIDES_STB_TRUETYPE` | Do not emit stb_truetype implementation symbols. |
 | `AFFINEUI_HOST_PROVIDES_FONTSTASH` | Do not emit fontstash implementation symbols. |
+
+For CMake builds, set `-DAFFINEUI_HTML_ENTITIES_FULL=ON`. For the
+two-file SDK, define `AFFINEUI_HTML_ENTITIES_FULL` when compiling
+`affineui.cpp`.
 
 ## Adapter coverage
 

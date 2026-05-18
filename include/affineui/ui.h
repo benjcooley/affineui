@@ -55,8 +55,9 @@ public:
     /// blocks in the cascade. Call this once at setup for app theming.
     void css(std::string_view source);
 
-    /// Load HTML from a file. Returns true on success. Convenience —
-    /// equivalent to read-the-file-and-call-html.
+    /// Load HTML from a file. Returns true on success. Linked local
+    /// resources such as `<link rel="stylesheet" href="...">` resolve
+    /// relative to the HTML file's directory.
     bool load(std::string_view path);
 
     // ── Rendering ───────────────────────────────────────────────────

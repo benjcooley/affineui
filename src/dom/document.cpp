@@ -30,6 +30,7 @@
 #include "layout/yoga_adapter.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -62,6 +63,8 @@ struct Block {
     std::string       elem_id;     // value of the `id` attribute (for "#x" selectors)
     std::vector<std::string> classes;  // tokenized `class` attribute
     std::string       text;
+    std::string       image_src;
+    std::string       placeholder;
     int               parent_idx{-1};
     Rect              bounds{};
     // Scroll state. Only meaningful when ComputedStyle.overflow_y is
@@ -77,6 +80,8 @@ struct Block {
     // transparent above its children). Click routing + hit-test
     // treat it normally — children sit on top anyway.
     bool              synthetic{false};
+    bool              text_control{false};
+    bool              placeholder_visible{false};
 };
 
 #if !defined(AFFINEUI_STUB_BUILD)
@@ -107,37 +112,19 @@ struct PseudoRule {
     const lxb_css_rule_declaration_list_t*        decls;
 };
 
-// Lexbor 2.4 exposes `border` and the side-specific
-// `border-*-color` longhands, but not the `border-color` shorthand;
-// it also lacks `border-radius`, `gap`, and `background` shorthand
-// support. RuleFill carries values we recover via a raw-text pre-scan
-// of each attached stylesheet, keyed by the same CompoundSelector
-// chain we use for pseudo overlays. Applied after the base resolve
-// but before inline-style scans (which still win, matching CSS
-// specificity for `style=""`).
+// FontFill carries font-family values we recover via a raw-text
+// pre-scan of each attached stylesheet, keyed by the same
+// CompoundSelector chain we use for pseudo overlays. The resolver
+// still maps font-family through AffineUI's font registry here.
 struct RuleFill {
     CompoundSelector              target;
     std::vector<CompoundSelector> ancestors;
     lxb_css_selector_specificity_t specificity{0};
     std::uint32_t                 source_order{0};
-    // Per-corner border-radius after applying CSS pairing. Valid only
-    // when has_border_radius is true; otherwise all four are -1.
-    int                           border_radius_tl_px{-1};
-    int                           border_radius_tr_px{-1};
-    int                           border_radius_br_px{-1};
-    int                           border_radius_bl_px{-1};
-    bool                          has_border_radius{false};
-    int                           gap_px{-1};             // -1 = unset
-    std::uint32_t                 border_rgba{0};
-    std::uint32_t                 background_rgba{0};
     std::string                   font_family;            // empty = unset
-    bool                          has_border_color{false};
-    bool                          has_background{false};
     // When non-zero, this fill is gated on the named pseudo-class
     // state bit (kHoverStateBit / kActiveStateBit / kFocusStateBit)
-    // being set on the matched element. Lets the gap-fill scanner
-    // recover properties from selectors like `.btn:focus { ... }`
-    // that lexbor parses but whose declarations it silently drops.
+    // being set on the matched element.
     std::uint8_t                  state_bit{0};
 };
 
@@ -189,9 +176,8 @@ struct DocumentImpl {
     // during attach. Pointers in `decls` reference rule data owned by
     // the document's CSS memory pool; valid for the document's lifetime.
     std::vector<PseudoRule>            pseudo_rules;
-    // Gap-fill rules carrying values for missing shorthand/property
-    // support in lexbor 2.4. Populated by scan_rule_fills() from the
-    // raw CSS source at attach time.
+    // Font-family fill rules populated by scan_rule_fills() from the raw
+    // CSS source at attach time.
     std::vector<RuleFill>              rule_fills;
     std::unique_ptr<StyleResolver>     resolver;
     ResolvedStyle                      root_style{};  // inheritance root
@@ -217,6 +203,11 @@ namespace {
 
 // ── DOM utilities ───────────────────────────────────────────────────
 
+bool is_html_ws(unsigned char c) {
+    return c == ' ' || c == '\t' || c == '\n' ||
+           c == '\r' || c == '\f' || c == '\v';
+}
+
 // CSS `white-space: normal` text content: collapse all whitespace
 // runs (spaces, tabs, newlines, vertical-tabs, form-feeds, carriage-
 // returns) to a single space character, and trim the result.
@@ -232,17 +223,12 @@ std::string node_text(lxb_dom_node_t* node) {
     lxb_char_t* raw = lxb_dom_node_text_content(node, &len);
     if (!raw || len == 0) return {};
 
-    const auto is_ws = [](unsigned char c) {
-        return c == ' ' || c == '\t' || c == '\n' ||
-               c == '\r' || c == '\f' || c == '\v';
-    };
-
     std::string out;
     out.reserve(len);
     bool prev_was_ws = true;  // leading whitespace is dropped
     for (std::size_t i = 0; i < len; ++i) {
         const auto c = static_cast<unsigned char>(raw[i]);
-        if (is_ws(c)) {
+        if (is_html_ws(c)) {
             if (!prev_was_ws) out.push_back(' ');
             prev_was_ws = true;
         } else {
@@ -253,6 +239,82 @@ std::string node_text(lxb_dom_node_t* node) {
     // Trim a trailing space we may have appended just before EOF.
     if (!out.empty() && out.back() == ' ') out.pop_back();
     return out;
+}
+
+bool node_is_collapsible_whitespace(lxb_dom_node_t* node) {
+    if (!node || node->type != LXB_DOM_NODE_TYPE_TEXT) return false;
+
+    size_t len = 0;
+    lxb_char_t* raw = lxb_dom_node_text_content(node, &len);
+    if (!raw || len == 0) return false;
+
+    for (std::size_t i = 0; i < len; ++i) {
+        if (!is_html_ws(static_cast<unsigned char>(raw[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+detail::ResolvedStyle anonymous_text_style(const detail::ResolvedStyle& parent) {
+    detail::ResolvedStyle rs{};
+    rs.animated.color_rgba           = parent.animated.color_rgba;
+    rs.computed.font_size_px         = parent.computed.font_size_px;
+    rs.computed.font_weight          = parent.computed.font_weight;
+    rs.computed.font_style           = parent.computed.font_style;
+    rs.computed.line_height_x100     = parent.computed.line_height_x100;
+    rs.computed.font_id              = parent.computed.font_id;
+    rs.computed.cursor               = parent.computed.cursor;
+    rs.computed.display              = detail::ComputedStyle::Display::Inline;
+    return rs;
+}
+
+void append_anonymous_inline_text(detail::DocumentImpl& impl,
+                                  const detail::ResolvedStyle& parent_style,
+                                  int parent_idx,
+                                  std::string text) {
+    if (text.empty()) return;
+
+    const auto id = impl.style_store.acquire_synthetic();
+    const auto rs = anonymous_text_style(parent_style);
+    impl.style_store.computed(id) = rs.computed;
+    impl.style_store.animated(id) = rs.animated;
+    impl.style_store.dirty(id) &=
+        static_cast<std::uint8_t>(~detail::StyleStore::DirtyStyle);
+
+    Block b;
+    b.id         = id;
+    b.tag        = "#text";
+    b.text       = std::move(text);
+    b.parent_idx = parent_idx;
+    impl.blocks.push_back(std::move(b));
+}
+
+int ensure_inline_run(detail::DocumentImpl& impl, int parent_idx,
+                      int& open_synth_idx) {
+    if (open_synth_idx >= 0) return open_synth_idx;
+
+    using Display = detail::ComputedStyle::Display;
+
+    const auto sid = impl.style_store.acquire_synthetic();
+    auto& synth_cs = impl.style_store.computed(sid);
+    synth_cs.display        = Display::Flex;
+    synth_cs.flex_direction = detail::ComputedStyle::FlexDirection::Row;
+    synth_cs.flex_wrap      = detail::ComputedStyle::FlexWrap::Wrap;
+    // Browser inline FFC aligns siblings at the text baseline. Yoga
+    // supports YGAlignBaseline but only when each item exposes a baseline
+    // via YGNodeSetBaselineFunc; our text leaves don't, so use Center until
+    // the painter exposes per-font ascender/descender data for a real
+    // baseline callback.
+    synth_cs.align_items    = detail::ComputedStyle::AlignItems::Center;
+
+    Block synth;
+    synth.id         = sid;
+    synth.parent_idx = parent_idx;
+    synth.synthetic  = true;
+    impl.blocks.push_back(std::move(synth));
+    open_synth_idx = static_cast<int>(impl.blocks.size()) - 1;
+    return open_synth_idx;
 }
 
 std::string tag_name(lxb_dom_element_t* elem) {
@@ -297,24 +359,42 @@ bool is_block_tag(const std::string& tag) {
            // Form-ish + a few common containers. We treat them as
            // block-level for layout — Phase 3 inline layout splits
            // these into their proper inline / inline-block flow.
-           tag == "button" || tag == "input"  || tag == "label" ||
-           tag == "form"   || tag == "ul"     || tag == "ol" ||
+           tag == "button" || tag == "input"  || tag == "textarea" ||
+           tag == "select" || tag == "label"  || tag == "form" ||
+           tag == "ul"     || tag == "ol" ||
            tag == "li"     || tag == "a"      || tag == "span" ||
            tag == "img";
 }
 
 // ── Stylesheet extraction ──────────────────────────────────────────
 //
-// Walk the parsed DOM looking for <style> elements and collect their
-// inner text. This is how `<style>body { color: red }</style>` in
-// the page gets through to the cascade.
+// Walk the parsed DOM looking for author stylesheets and collect them
+// in document order. Inline `<style>` blocks append their text. Linked
+// stylesheets go through the embedder resource loader.
 
-void collect_style_text(lxb_dom_node_t* node, std::string& out) {
+bool rel_includes_stylesheet(std::string_view rel) {
+    std::string token;
+    for (char rel_ch : rel) {
+        const auto ch = static_cast<unsigned char>(rel_ch);
+        if (std::isspace(ch)) {
+            if (token == "stylesheet") return true;
+            token.clear();
+            continue;
+        }
+        token.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    return token == "stylesheet";
+}
+
+void collect_author_stylesheets(lxb_dom_node_t* node,
+                                const detail::DocumentImpl& impl,
+                                std::string& out) {
     for (auto* c = lxb_dom_node_first_child(node); c;
          c = lxb_dom_node_next(c)) {
         if (c->type == LXB_DOM_NODE_TYPE_ELEMENT) {
             auto* el = lxb_dom_interface_element(c);
-            if (tag_name(el) == "style") {
+            const auto tag = tag_name(el);
+            if (tag == "style") {
                 size_t len = 0;
                 if (auto* t = lxb_dom_node_text_content(c, &len); t && len) {
                     out.append(reinterpret_cast<const char*>(t), len);
@@ -322,8 +402,18 @@ void collect_style_text(lxb_dom_node_t* node, std::string& out) {
                 }
                 continue;  // skip <style>'s descendants
             }
+            if (tag == "link" && impl.resource_loader) {
+                const auto rel = attr_string(el, "rel");
+                const auto href = attr_string(el, "href");
+                if (!href.empty() && rel_includes_stylesheet(rel)) {
+                    if (auto css = impl.resource_loader(href); !css.empty()) {
+                        out.append(css);
+                        out.push_back('\n');
+                    }
+                }
+            }
         }
-        collect_style_text(c, out);
+        collect_author_stylesheets(c, impl, out);
     }
 }
 
@@ -472,17 +562,14 @@ void scan_pseudo_rules(lxb_css_stylesheet_t* sst,
     }
 }
 
-// ── Gap-fill scanner: properties lexbor 2.4 silently drops ────────
+// ── Font-family fill scanner ──────────────────────────────────────
 //
-// `border-radius`, `gap`, `background` shorthand, and the
-// `border-color` shorthand are not represented in lexbor's declaration
-// list for the version we vendor. We recover those specific values with
-// a small scanner over the original CSS source. The scanner builds a
-// side-table (RuleFill) of selector + extracted values that the cascade
-// overlay applies after the base resolve. Selector grammar matches what
-// scan_pseudo_rules supports: simple selectors (tag / class / id) AND'd
-// in compounds, compounds joined by descendant combinator. Anything
-// richer is skipped at scan time.
+// AffineUI keeps font-family names in a local registry. Until the main
+// resolver maps lexbor's font-family values into that registry, this
+// scanner builds a side-table of selector + first family name from the
+// original CSS source. Selector grammar matches scan_pseudo_rules:
+// simple selectors (tag / class / id) AND'd in compounds, compounds
+// joined by descendant combinator.
 
 // ASCII-only whitespace test we use throughout (CSS is ASCII for
 // our purposes). Avoids std::isspace pulling in locale.
@@ -633,124 +720,6 @@ bool parse_static_selector(std::string_view sel,
     return true;
 }
 
-// Find `key: <integer>` (optional unit, ignored) in a decls block.
-// Returns -1 when absent. Property starts must be at the beginning
-// of the block or immediately after a `;` (and any whitespace).
-int find_decl_px(std::string_view decls, std::string_view key) {
-    std::size_t pos = 0;
-    while (pos < decls.size()) {
-        const auto kp = decls.find(key, pos);
-        if (kp == std::string_view::npos) return -1;
-        const bool at_boundary =
-            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
-        if (!at_boundary) { pos = kp + 1; continue; }
-        auto rest = decls.substr(kp + key.size());
-        rest = ltrim_ws(rest);
-        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
-        rest = ltrim_ws(rest.substr(1));
-        int v = 0; bool any = false;
-        while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
-            v = v * 10 + (rest.front() - '0');
-            rest.remove_prefix(1);
-            any = true;
-        }
-        return any ? v : -1;
-    }
-    return -1;
-}
-
-// Find `key: #RGB|#RRGGBB|#RRGGBBAA`. Returns {packed_rgba, true} on
-// success, {0, false} otherwise.
-std::pair<std::uint32_t, bool> find_decl_hex(std::string_view decls,
-                                             std::string_view key) {
-    std::size_t pos = 0;
-    while (pos < decls.size()) {
-        const auto kp = decls.find(key, pos);
-        if (kp == std::string_view::npos) return {0, false};
-        const bool at_boundary =
-            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
-        if (!at_boundary) { pos = kp + 1; continue; }
-        auto rest = decls.substr(kp + key.size());
-        rest = ltrim_ws(rest);
-        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
-        rest = ltrim_ws(rest.substr(1));
-        if (rest.empty() || rest.front() != '#') { pos = kp + 1; continue; }
-        rest.remove_prefix(1);
-        std::uint32_t v = 0;
-        int n = 0;
-        while (!rest.empty() && n < 8) {
-            const char c = rest.front();
-            int d;
-            if      (c >= '0' && c <= '9') d = c - '0';
-            else if (c >= 'a' && c <= 'f') d = 10 + (c - 'a');
-            else if (c >= 'A' && c <= 'F') d = 10 + (c - 'A');
-            else break;
-            v = (v << 4) | static_cast<std::uint32_t>(d);
-            rest.remove_prefix(1);
-            ++n;
-        }
-        if (n == 3) {
-            // #RGB → expand each nibble to a byte.
-            const auto r = (v >> 8) & 0xFu;
-            const auto g = (v >> 4) & 0xFu;
-            const auto b =  v       & 0xFu;
-            v = (r << 28) | (r << 24)
-              | (g << 20) | (g << 16)
-              | (b << 12) | (b <<  8)
-              | 0xFFu;
-        } else if (n == 6) {
-            v = (v << 8) | 0xFFu;
-        } else if (n != 8) {
-            return {0, false};
-        }
-        return {v, true};
-    }
-    return {0, false};
-}
-
-// Find `key: <px> [<px> [<px> [<px>]]]` and return up to N parsed
-// integers via `out_values` / `out_count`. Returns true on at least
-// one match. Used for shorthands like `border-radius: 4px 8px` where
-// CSS pairing rules are applied by the caller.
-bool find_decl_px_values(std::string_view decls, std::string_view key,
-                         int out_values[4], int& out_count) {
-    out_count = 0;
-    std::size_t pos = 0;
-    while (pos < decls.size()) {
-        const auto kp = decls.find(key, pos);
-        if (kp == std::string_view::npos) return false;
-        const bool at_boundary =
-            (kp == 0) || decls[kp - 1] == ';' || is_css_ws(decls[kp - 1]);
-        if (!at_boundary) { pos = kp + 1; continue; }
-        auto rest = decls.substr(kp + key.size());
-        rest = ltrim_ws(rest);
-        if (rest.empty() || rest.front() != ':') { pos = kp + 1; continue; }
-        rest = ltrim_ws(rest.substr(1));
-        // Now read up to 4 integer values separated by whitespace.
-        while (out_count < 4 && !rest.empty() && rest.front() != ';' &&
-               rest.front() != '/') {
-            int v = 0; bool any = false;
-            while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
-                v = v * 10 + (rest.front() - '0');
-                rest.remove_prefix(1);
-                any = true;
-            }
-            if (!any) break;
-            out_values[out_count++] = v;
-            // Skip unit (px) + whitespace.
-            while (!rest.empty() &&
-                   ((rest.front() >= 'a' && rest.front() <= 'z') ||
-                    (rest.front() >= 'A' && rest.front() <= 'Z') ||
-                    rest.front() == '%')) {
-                rest.remove_prefix(1);
-            }
-            rest = ltrim_ws(rest);
-        }
-        return out_count > 0;
-    }
-    return false;
-}
-
 // Find `key: <token>` and return the first comma/semicolon-delimited
 // token, with surrounding whitespace and any wrapping ' or " stripped.
 // Used to extract the first family name from `font-family: <list>`.
@@ -782,7 +751,7 @@ std::string find_decl_first_ident(std::string_view decls,
     return {};
 }
 
-// Walk the raw CSS source for each rule's missing-property declarations.
+// Walk the raw CSS source for each rule's font-family declaration.
 // For rules whose selector(s) parse as static (no pseudo / no advanced
 // combinators), append a RuleFill entry per comma-separated group.
 void scan_rule_fills(lxb_css_stylesheet_t* sst,
@@ -805,39 +774,12 @@ void scan_rule_fills(lxb_css_stylesheet_t* sst,
                 : nullptr;
         ++raw_rule_index;
 
-        int radii[4] = {-1, -1, -1, -1};
-        int radius_count = 0;
-        const bool has_radius =
-            find_decl_px_values(raw.decls, "border-radius", radii, radius_count);
-        // CSS pairing for 1/2/3/4-value border-radius:
-        //   1 → TL=TR=BR=BL
-        //   2 → TL=BR=v0, TR=BL=v1
-        //   3 → TL=v0, TR=BL=v1, BR=v2
-        //   4 → TL,TR,BR,BL = v0..v3
-        int r_tl = -1, r_tr = -1, r_br = -1, r_bl = -1;
-        if (has_radius) {
-            switch (radius_count) {
-                case 1: r_tl = r_tr = r_br = r_bl = radii[0]; break;
-                case 2: r_tl = r_br = radii[0]; r_tr = r_bl = radii[1]; break;
-                case 3: r_tl = radii[0]; r_tr = r_bl = radii[1]; r_br = radii[2]; break;
-                default: r_tl = radii[0]; r_tr = radii[1];
-                         r_br = radii[2]; r_bl = radii[3]; break;
-            }
-        }
-        const auto bc     = find_decl_hex(raw.decls, "border-color");
-        const int  gap    = find_decl_px(raw.decls, "gap");
-        // `background` shorthand. find_decl_hex's boundary check
-        // requires `:` immediately (after optional ws), so the same
-        // call won't accidentally hit `background-color` — that's a
-        // separate property handled by lexbor's longhand path.
-        const auto bg     = find_decl_hex(raw.decls, "background");
         // font-family — only the first family name is honored. Real
         // browsers walk the fallback list and pick the first family
         // that has a face installed; our resolver does a similar
         // fallback inside resolve_font when the name doesn't match.
-        const auto ff     = find_decl_first_ident(raw.decls, "font-family");
-        if (!has_radius && !bc.second && gap < 0 && !bg.second &&
-            ff.empty()) continue;
+        const auto ff = find_decl_first_ident(raw.decls, "font-family");
+        if (ff.empty()) continue;
 
         // Each comma-separated group becomes its own RuleFill.
         std::string_view sel_text = trim_css_ws(raw.selector);
@@ -862,16 +804,6 @@ void scan_rule_fills(lxb_css_stylesheet_t* sst,
                     rf.specificity          = specificity;
                     rf.source_order         =
                         static_cast<std::uint32_t>(out.size());
-                    rf.border_radius_tl_px  = r_tl;
-                    rf.border_radius_tr_px  = r_tr;
-                    rf.border_radius_br_px  = r_br;
-                    rf.border_radius_bl_px  = r_bl;
-                    rf.has_border_radius    = has_radius;
-                    rf.gap_px               = gap;
-                    rf.border_rgba          = bc.first;
-                    rf.has_border_color     = bc.second;
-                    rf.background_rgba      = bg.first;
-                    rf.has_background       = bg.second;
                     rf.font_family          = ff;
                     rf.state_bit            = state_bit;
                     out.push_back(std::move(rf));
@@ -905,92 +837,15 @@ void attach_stylesheet(detail::DocumentImpl& impl, std::string_view css) {
     if (lxb_html_document_stylesheet_attach(impl.doc, sst) == LXB_STATUS_OK) {
         impl.sheets.push_back(sst);
         scan_pseudo_rules(sst, impl.pseudo_rules);
-        // Recover properties lexbor doesn't expose from the raw CSS
-        // source. attach_stylesheet's `css` argument outlives this
-        // call (UA stylesheet is static, user_stylesheet is
-        // owned by impl_, author CSS is a local that's destroyed
-        // when set_html returns — but we extract everything we need
-        // into RuleFill values here, which copy by value).
+        // Recover font-family names into AffineUI's font registry side
+        // table. attach_stylesheet's `css` argument outlives this call
+        // (UA stylesheet is static, user_stylesheet is owned by impl_,
+        // author CSS is a local that's destroyed when set_html returns,
+        // but RuleFill values copy what they need).
         scan_rule_fills(sst, css, impl.rule_fills);
     } else {
         lxb_css_stylesheet_destroy(sst, true);
     }
-}
-
-// Inline-style scan helper. Lexbor 2.4 doesn't expose every CSS
-// property type (`border-radius`, `gap`, etc.), so for those we
-// extract the value from the element's `style="..."` attribute via
-// a stupid substring scan. Returns -1 when the property isn't
-// present. Handles `<key>: <n><unit>?` and nothing more — no calc,
-// no var, no shorthand expansion.
-int scan_inline_px_property(lxb_dom_element_t* elem,
-                            std::string_view key) {
-    size_t len = 0;
-    const lxb_char_t* attr = lxb_dom_element_get_attribute(
-        elem,
-        reinterpret_cast<const lxb_char_t*>("style"), 5,
-        &len);
-    if (!attr || len == 0) return -1;
-    std::string_view s(reinterpret_cast<const char*>(attr), len);
-    const auto pos = s.find(key);
-    if (pos == std::string_view::npos) return -1;
-    auto rest = s.substr(pos + key.size());
-    while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
-    if (rest.empty() || rest.front() != ':') return -1;
-    rest.remove_prefix(1);
-    while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
-    int  value = 0;
-    bool any   = false;
-    while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
-        value = value * 10 + (rest.front() - '0');
-        rest.remove_prefix(1);
-        any = true;
-    }
-    return any ? value : -1;
-}
-
-inline int parse_gap_inline(lxb_dom_element_t* elem) {
-    return scan_inline_px_property(elem, "gap");
-}
-
-// Multi-value inline-style scanner: same shape as scan_inline_px_property
-// but reads up to 4 successive integer values. Returns the count
-// (0..4) actually parsed; result indices > count are left untouched.
-int scan_inline_px_values(lxb_dom_element_t* elem,
-                          std::string_view key,
-                          int out[4]) {
-    size_t len = 0;
-    const lxb_char_t* attr = lxb_dom_element_get_attribute(
-        elem,
-        reinterpret_cast<const lxb_char_t*>("style"), 5,
-        &len);
-    if (!attr || len == 0) return 0;
-    std::string_view s(reinterpret_cast<const char*>(attr), len);
-    const auto pos = s.find(key);
-    if (pos == std::string_view::npos) return 0;
-    auto rest = s.substr(pos + key.size());
-    while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
-    if (rest.empty() || rest.front() != ':') return 0;
-    rest.remove_prefix(1);
-    int count = 0;
-    while (count < 4 && !rest.empty() && rest.front() != ';') {
-        while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
-        if (rest.empty() || rest.front() < '0' || rest.front() > '9') break;
-        int v = 0;
-        while (!rest.empty() && rest.front() >= '0' && rest.front() <= '9') {
-            v = v * 10 + (rest.front() - '0');
-            rest.remove_prefix(1);
-        }
-        out[count++] = v;
-        // Skip a unit (e.g. "px", "%") then continue to next number.
-        while (!rest.empty() &&
-               ((rest.front() >= 'a' && rest.front() <= 'z') ||
-                (rest.front() >= 'A' && rest.front() <= 'Z') ||
-                rest.front() == '%')) {
-            rest.remove_prefix(1);
-        }
-    }
-    return count;
 }
 
 // Keyword-value variant of the inline-style scanner. Returns the
@@ -1035,13 +890,11 @@ detail::ComputedStyle::Cursor parse_cursor_keyword(std::string_view kw) {
 }
 
 // Recursive DFS collector. Walks the DOM, creates one Block per
-// block-level element, links it to its parent. Inline elements
-// (e.g. <b>, <span>) do NOT become blocks; their text is absorbed
-// into the containing leaf block via node_text().
-//
-// A block is treated as a *leaf* (gets text) when no descendant
-// block-level element exists below it. Containers (a <div> wrapping
-// other blocks) have empty text and just carry styling.
+// block-level element, links it to its parent, and wraps inline text
+// runs in synthetic line boxes. Leaf blocks can still own direct text,
+// but mixed content such as "text <strong>inline</strong> <button>"
+// is represented as anonymous inline text boxes instead of being
+// dropped when a block-level child is present.
 void collect_blocks(detail::DocumentImpl& impl,
                     lxb_dom_node_t* node,
                     const detail::ResolvedStyle& parent_style,
@@ -1051,10 +904,33 @@ void collect_blocks(detail::DocumentImpl& impl,
     // siblings. -1 means we're not currently in such a run; the
     // next inline child opens a fresh line-box, and the next
     // non-inline child resets back to the actual parent.
-    int open_synth_idx = -1;
+    int  open_synth_idx = -1;
+    bool pending_inline_space = false;
 
     for (auto* child = lxb_dom_node_first_child(node); child;
          child = lxb_dom_node_next(child)) {
+        if (node_is_collapsible_whitespace(child)) {
+            if (open_synth_idx >= 0) pending_inline_space = true;
+            continue;
+        }
+
+        if (child->type == LXB_DOM_NODE_TYPE_TEXT) {
+            auto text = node_text(child);
+            if (!text.empty()) {
+                const int inline_parent_idx =
+                    ensure_inline_run(impl, parent_idx, open_synth_idx);
+                if (pending_inline_space) {
+                    append_anonymous_inline_text(impl, parent_style,
+                                                 inline_parent_idx, " ");
+                    pending_inline_space = false;
+                }
+                append_anonymous_inline_text(impl, parent_style,
+                                             inline_parent_idx,
+                                             std::move(text));
+            }
+            continue;
+        }
+
         if (child->type != LXB_DOM_NODE_TYPE_ELEMENT) continue;
         auto* elem = lxb_dom_interface_element(child);
         std::string tag = tag_name(elem);
@@ -1064,9 +940,19 @@ void collect_blocks(detail::DocumentImpl& impl,
             continue;
 
         if (!is_block_tag(tag)) {
-            // Inline content — its text is absorbed by the enclosing
-            // leaf block's node_text() call. Don't recurse for now;
-            // real inline layout is a Phase 2D follow-up.
+            auto text = node_text(child);
+            if (!text.empty()) {
+                auto rs = impl.resolver->resolve(elem, parent_style);
+                const int inline_parent_idx =
+                    ensure_inline_run(impl, parent_idx, open_synth_idx);
+                if (pending_inline_space) {
+                    append_anonymous_inline_text(impl, parent_style,
+                                                 inline_parent_idx, " ");
+                    pending_inline_space = false;
+                }
+                append_anonymous_inline_text(impl, rs, inline_parent_idx,
+                                             std::move(text));
+            }
             continue;
         }
 
@@ -1105,11 +991,9 @@ void collect_blocks(detail::DocumentImpl& impl,
             }
         }
 
-        // Gap-fill overlay: missing shorthand/property support recovered
-        // from the CSS source.
-        // Same selector grammar as pseudo overlay; later rules win
-        // (the scan is in attach order, which matches CSS source
-        // order).
+        // Font-family fill overlay. Same selector grammar as pseudo
+        // overlay; later rules win (the scan is in attach order, which
+        // matches CSS source order).
         for (const auto& rf : impl.rule_fills) {
             // Pseudo-scoped fills only apply when the state bit is set.
             // Unscoped fills (state_bit == 0) always apply.
@@ -1118,24 +1002,6 @@ void collect_blocks(detail::DocumentImpl& impl,
                 continue;
             if (!ancestor_chain_matches(rf.ancestors, parent_idx,
                                         impl.blocks)) continue;
-            if (rf.has_border_radius) {
-                rs.computed.border_radius_top_left_px =
-                    static_cast<std::int16_t>(rf.border_radius_tl_px);
-                rs.computed.border_radius_top_right_px =
-                    static_cast<std::int16_t>(rf.border_radius_tr_px);
-                rs.computed.border_radius_bot_right_px =
-                    static_cast<std::int16_t>(rf.border_radius_br_px);
-                rs.computed.border_radius_bot_left_px =
-                    static_cast<std::int16_t>(rf.border_radius_bl_px);
-            }
-            if (rf.gap_px >= 0) {
-                rs.computed.row_gap    = static_cast<std::int16_t>(rf.gap_px);
-                rs.computed.column_gap = static_cast<std::int16_t>(rf.gap_px);
-            }
-            if (rf.has_border_color)
-                rs.animated.border_rgba = rf.border_rgba;
-            if (rf.has_background)
-                rs.animated.background_rgba = rf.background_rgba;
             if (!rf.font_family.empty())
                 rs.computed.font_id = impl.style_store.intern_font_family(
                     rf.font_family);
@@ -1144,32 +1010,6 @@ void collect_blocks(detail::DocumentImpl& impl,
         impl.style_store.computed(id) = rs.computed;
         impl.style_store.animated(id) = rs.animated;
 
-        // Inline scans for properties lexbor 2.4 doesn't expose via
-        // the CSS module. Lives here next to where the cascade
-        // results are committed. Multi-value border-radius uses the
-        // same CSS pairing rules as the gap-fill scanner.
-        {
-            int rv[4] = {0, 0, 0, 0};
-            const int n = scan_inline_px_values(elem, "border-radius", rv);
-            if (n > 0) {
-                int tl = 0, tr = 0, br = 0, bl = 0;
-                switch (n) {
-                    case 1: tl = tr = br = bl = rv[0]; break;
-                    case 2: tl = br = rv[0]; tr = bl = rv[1]; break;
-                    case 3: tl = rv[0]; tr = bl = rv[1]; br = rv[2]; break;
-                    default: tl = rv[0]; tr = rv[1]; br = rv[2]; bl = rv[3]; break;
-                }
-                auto& cs = impl.style_store.computed(id);
-                cs.border_radius_top_left_px  = static_cast<std::int16_t>(tl);
-                cs.border_radius_top_right_px = static_cast<std::int16_t>(tr);
-                cs.border_radius_bot_right_px = static_cast<std::int16_t>(br);
-                cs.border_radius_bot_left_px  = static_cast<std::int16_t>(bl);
-            }
-        }
-        if (const int g = parse_gap_inline(elem); g >= 0) {
-            impl.style_store.computed(id).row_gap    = static_cast<std::int16_t>(g);
-            impl.style_store.computed(id).column_gap = static_cast<std::int16_t>(g);
-        }
         if (auto kw = scan_inline_keyword(elem, "cursor"); !kw.empty()) {
             impl.style_store.computed(id).cursor = parse_cursor_keyword(kw);
         }
@@ -1187,32 +1027,16 @@ void collect_blocks(detail::DocumentImpl& impl,
             rs.computed.display == Display::InlineBlock;
         int effective_parent_idx;
         if (child_is_inline) {
-            if (open_synth_idx < 0) {
-                const auto sid = impl.style_store.acquire_synthetic();
-                auto& synth_cs = impl.style_store.computed(sid);
-                synth_cs.display        = Display::Flex;
-                synth_cs.flex_direction = detail::ComputedStyle::FlexDirection::Row;
-                synth_cs.flex_wrap      = detail::ComputedStyle::FlexWrap::Wrap;
-                // Browser inline FFC aligns siblings at the text
-                // baseline. Yoga supports YGAlignBaseline but only
-                // when each item exposes a baseline via
-                // YGNodeSetBaselineFunc; our text leaves don't, so
-                // baseline-alignment falls back to bottom-aligned —
-                // worse than vertical-center for the common case of
-                // a padded button next to a plain span. Use Center
-                // for now; proper baseline lands when the painter
-                // exposes ascender/descender per font handle.
-                synth_cs.align_items    = detail::ComputedStyle::AlignItems::Center;
-                Block synth;
-                synth.id         = sid;
-                synth.parent_idx = parent_idx;
-                synth.synthetic  = true;
-                impl.blocks.push_back(std::move(synth));
-                open_synth_idx = static_cast<int>(impl.blocks.size()) - 1;
+            ensure_inline_run(impl, parent_idx, open_synth_idx);
+            if (pending_inline_space) {
+                append_anonymous_inline_text(impl, parent_style,
+                                             open_synth_idx, " ");
+                pending_inline_space = false;
             }
             effective_parent_idx = open_synth_idx;
         } else {
             open_synth_idx       = -1;
+            pending_inline_space = false;
             effective_parent_idx = parent_idx;
         }
 
@@ -1222,6 +1046,13 @@ void collect_blocks(detail::DocumentImpl& impl,
         b.tag        = std::move(tag);
         b.elem_id    = attr_string(elem, "id");
         b.classes    = split_classes(attr_string(elem, "class"));
+        if (b.tag == "img") {
+            b.image_src = attr_string(elem, "src");
+        }
+        if (b.tag == "input" || b.tag == "textarea") {
+            b.text_control = true;
+            b.placeholder = attr_string(elem, "placeholder");
+        }
         b.parent_idx = effective_parent_idx;
         impl.blocks.push_back(std::move(b));
 
@@ -1232,7 +1063,22 @@ void collect_blocks(detail::DocumentImpl& impl,
         collect_blocks(impl, child, rs, my_idx);
         const bool is_leaf = (impl.blocks.size() == before);
         if (is_leaf) {
-            impl.blocks[static_cast<std::size_t>(my_idx)].text = node_text(child);
+            auto& leaf = impl.blocks[static_cast<std::size_t>(my_idx)];
+            if (leaf.tag == "input") {
+                leaf.text = attr_string(elem, "value");
+                if (leaf.text.empty() && !leaf.placeholder.empty()) {
+                    leaf.text = leaf.placeholder;
+                    leaf.placeholder_visible = true;
+                }
+            } else if (leaf.tag == "textarea") {
+                leaf.text = node_text(child);
+                if (leaf.text.empty() && !leaf.placeholder.empty()) {
+                    leaf.text = leaf.placeholder;
+                    leaf.placeholder_visible = true;
+                }
+            } else if (leaf.tag != "img") {
+                leaf.text = node_text(child);
+            }
         }
     }
 }
@@ -1293,7 +1139,7 @@ void Document::set_html(std::string_view html) {
     attach_stylesheet(*impl_, theme::ua_default());
 
     std::string author_css;
-    collect_style_text(lxb_dom_interface_node(impl_->doc), author_css);
+    collect_author_stylesheets(lxb_dom_interface_node(impl_->doc), *impl_, author_css);
     attach_stylesheet(*impl_, author_css);
 
     attach_stylesheet(*impl_, impl_->user_stylesheet);
@@ -1353,10 +1199,9 @@ void Document::layout(int viewport_width, int viewport_height,
     // top/bottom padding ends up symmetric for free because the
     // content area matches what the painter will draw into.
     //
-    // Page gutter is driven by body's CSS padding. UA defaults body
-    // to 24px on all sides; pages that want edge-to-edge content
-    // (Bootstrap-style navbars, full-bleed images) override with
-    // `body { padding: 0 }`.
+    // Page gutter is driven by body's CSS padding. The UA stylesheet
+    // keeps body padding at the browser-compatible zero default;
+    // demos or applications that want a gutter author it explicitly.
     int pad_l = 0, pad_t = 0, pad_r = 0, pad_b = 0;
 #if !defined(AFFINEUI_STUB_BUILD)
     if (impl_->doc && impl_->resolver) {
@@ -1380,6 +1225,27 @@ void Document::layout(int viewport_width, int viewport_height,
         in.style          = &cs;
         in.parent_idx     = b.parent_idx;
         in.intrinsic_w_px = 0;  // let parent stretch on cross axis
+
+        if (!b.image_src.empty()) {
+            if (measurer != nullptr) {
+                const auto image = measurer->load_image(b.image_src);
+                const auto sz = measurer->image_size(image);
+                if (sz.width > 0 && sz.height > 0) {
+                    if (cs.width > 0 && cs.height <= 0) {
+                        in.intrinsic_h_px =
+                            std::max(1, (sz.height * cs.width) / sz.width);
+                    } else if (cs.height > 0 && cs.width <= 0) {
+                        in.intrinsic_w_px =
+                            std::max(1, (sz.width * cs.height) / sz.height);
+                    } else if (cs.width <= 0 && cs.height <= 0) {
+                        in.intrinsic_w_px = sz.width;
+                        in.intrinsic_h_px = sz.height;
+                    }
+                }
+            }
+            inputs.push_back(in);
+            continue;
+        }
 
         // Container blocks (no direct text — wrap child blocks) leave
         // intrinsic_h at 0 so Yoga sizes them from their children's
@@ -1530,6 +1396,30 @@ void Document::draw(Painter& painter) {
             && (cs.border_top > 0 || cs.border_right > 0
                 || cs.border_bottom > 0 || cs.border_left > 0)
             && (an.border_rgba & 0xFFu) != 0;
+        const bool has_shadow = (an.shadow_rgba & 0xFFu) != 0
+            && (an.shadow_blur != 0 || an.shadow_spread != 0 ||
+                an.shadow_offset_x != 0 || an.shadow_offset_y != 0);
+
+        if (has_shadow) {
+            const int spread = std::max<int>(0, an.shadow_spread);
+            const int blur   = std::max<int>(0, an.shadow_blur);
+            const int expand = std::max(1, spread + blur);
+            const Rect shadow_r{
+                eff.x + an.shadow_offset_x - expand,
+                eff.y + an.shadow_offset_y - expand,
+                eff.w + expand * 2,
+                eff.h + expand * 2,
+            };
+            const float sr = any_radius
+                ? std::max({r_tl, r_tr, r_br, r_bl}) + static_cast<float>(expand)
+                : 0.0f;
+            if (sr > 0.0f) {
+                painter.fill_rounded_rect(shadow_r, sr,
+                                          detail::unpack_rgba(an.shadow_rgba));
+            } else {
+                painter.fill_rect(shadow_r, detail::unpack_rgba(an.shadow_rgba));
+            }
+        }
 
         if (has_bg) {
             const Color bg = detail::unpack_rgba(an.background_rgba);
@@ -1537,6 +1427,25 @@ void Document::draw(Painter& painter) {
             else if (uniform_r)               painter.fill_rounded_rect(eff, r_tl, bg);
             else                              painter.fill_rounded_rect_varying(
                                                   eff, r_tl, r_tr, r_br, r_bl, bg);
+        }
+
+        if (!b.image_src.empty()) {
+            const auto image = painter.load_image(b.image_src);
+            const auto sz = painter.image_size(image);
+            if (image != 0 && sz.width > 0 && sz.height > 0) {
+                const Rect content_r{
+                    eff.x + cs.border_left + cs.padding_left,
+                    eff.y + cs.border_top + cs.padding_top,
+                    eff.w - cs.border_left - cs.border_right
+                          - cs.padding_left - cs.padding_right,
+                    eff.h - cs.border_top - cs.border_bottom
+                          - cs.padding_top - cs.padding_bottom,
+                };
+                if (content_r.w > 0 && content_r.h > 0) {
+                    painter.draw_image(image, content_r,
+                                       Rect{0, 0, sz.width, sz.height});
+                }
+            }
         }
 
         if (has_border) {
@@ -1734,12 +1643,9 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
     auto parent = parent_resolved(impl, idx);
     auto rs     = impl.resolver->resolve(elem, parent);
     apply_pseudo_overlay(impl, block, rs);
-    // Re-apply gap-fill overlay too — restyle_block runs on the
-    // dispatch path (hover/active/focus toggles), so the bg-color
-    // from a pseudo rule needs to coexist with the rule-block
-    // border-color and border-radius the same way collect_blocks
-    // layers them. Pseudo-scoped fills (e.g. `.btn:focus { ... }`
-    // border-color) gate on the matching state bit being set.
+    // Re-apply font-family fills too: restyle_block runs on the dispatch
+    // path (hover/active/focus toggles), and pseudo-scoped fills gate on
+    // the matching state bit being set.
     const auto sb_rs = impl.style_store.state_bits(block.id);
     for (const auto& rf : impl.rule_fills) {
         if (rf.state_bit && !(sb_rs & rf.state_bit)) continue;
@@ -1747,24 +1653,6 @@ void restyle_block(detail::DocumentImpl& impl, int idx) {
             continue;
         if (!ancestor_chain_matches(rf.ancestors, block.parent_idx, impl.blocks))
             continue;
-        if (rf.has_border_radius) {
-            rs.computed.border_radius_top_left_px =
-                static_cast<std::int16_t>(rf.border_radius_tl_px);
-            rs.computed.border_radius_top_right_px =
-                static_cast<std::int16_t>(rf.border_radius_tr_px);
-            rs.computed.border_radius_bot_right_px =
-                static_cast<std::int16_t>(rf.border_radius_br_px);
-            rs.computed.border_radius_bot_left_px =
-                static_cast<std::int16_t>(rf.border_radius_bl_px);
-        }
-        if (rf.gap_px >= 0) {
-            rs.computed.row_gap    = static_cast<std::int16_t>(rf.gap_px);
-            rs.computed.column_gap = static_cast<std::int16_t>(rf.gap_px);
-        }
-        if (rf.has_border_color)
-            rs.animated.border_rgba = rf.border_rgba;
-        if (rf.has_background)
-            rs.animated.background_rgba = rf.background_rgba;
         if (!rf.font_family.empty())
             rs.computed.font_id = impl.style_store.intern_font_family(
                 rf.font_family);
@@ -1880,12 +1768,34 @@ int find_scrollable_y_ancestor(const detail::DocumentImpl& impl, int idx) {
     }
     return -1;
 }
+
+bool focused_text_control(detail::DocumentImpl& impl, Block*& out) {
+    out = nullptr;
+    const int idx = impl.focused_idx;
+    if (idx < 0 || idx >= static_cast<int>(impl.blocks.size())) return false;
+    auto& block = impl.blocks[static_cast<std::size_t>(idx)];
+    if (!block.text_control) return false;
+    out = &block;
+    return true;
+}
+
+void remove_last_utf8_codepoint(std::string& text) {
+    if (text.empty()) return;
+    std::size_t pos = text.size() - 1;
+    while (pos > 0 &&
+           (static_cast<unsigned char>(text[pos]) & 0xC0u) == 0x80u) {
+        --pos;
+    }
+    text.erase(pos);
+}
 #else  // stub build — no DOM, no pseudo / scroll bookkeeping
 bool refresh_hover_chain(detail::DocumentImpl&)  { return false; }
 bool refresh_active_chain(detail::DocumentImpl&) { return false; }
 bool set_focus(detail::DocumentImpl&, int)       { return false; }
 int  focusable_ancestor(const detail::DocumentImpl&, int) { return -1; }
 int  find_scrollable_y_ancestor(const detail::DocumentImpl&, int) { return -1; }
+bool focused_text_control(detail::DocumentImpl&, Block*&) { return false; }
+void remove_last_utf8_codepoint(std::string&) {}
 #endif
 }  // namespace
 
@@ -1942,11 +1852,40 @@ DispatchResult Document::dispatch(const Event& ev) {
 #if !defined(AFFINEUI_STUB_BUILD)
         case EventType::KeyDown: {
             // ESC clears focus, matching the convention browsers use for
-            // dismissing a focused control. Other keys are dropped for
-            // now — text-input behavior (typing into <input>, caret,
-            // IME) is a later thread.
+            // dismissing a focused control.
             if (ev.key == Key::Escape) {
                 if (set_focus(*impl_, -1)) result.redraw_requested = true;
+            } else if (ev.key == Key::Backspace) {
+                Block* control = nullptr;
+                if (focused_text_control(*impl_, control)) {
+                    if (control->placeholder_visible) {
+                        control->text.clear();
+                        control->placeholder_visible = false;
+                    } else {
+                        remove_last_utf8_codepoint(control->text);
+                    }
+                    if (control->text.empty() && !control->placeholder.empty()) {
+                        control->text = control->placeholder;
+                        control->placeholder_visible = true;
+                    }
+                    impl_->content_size = Size{0, 0};
+                    impl_->paint_dirty = true;
+                    result.redraw_requested = true;
+                }
+            }
+            break;
+        }
+        case EventType::TextInput: {
+            Block* control = nullptr;
+            if (focused_text_control(*impl_, control) && !ev.text.empty()) {
+                if (control->placeholder_visible) {
+                    control->text.clear();
+                    control->placeholder_visible = false;
+                }
+                control->text += ev.text;
+                impl_->content_size = Size{0, 0};
+                impl_->paint_dirty = true;
+                result.redraw_requested = true;
             }
             break;
         }

@@ -133,6 +133,10 @@ inline Event translate(const SDL_Event& ev) {
             out.key      = key_to_affine(ev.key.keysym.sym);
             return out;
         }
+        case SDL_TEXTINPUT:
+            out.type = EventType::TextInput;
+            out.text = ev.text.text;
+            return out;
         case SDL_WINDOWEVENT:
             if (ev.window.event == SDL_WINDOWEVENT_LEAVE) {
                 out.type = EventType::MouseMove;

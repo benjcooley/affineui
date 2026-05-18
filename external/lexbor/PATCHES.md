@@ -19,6 +19,12 @@ Lexbor v2.4.0 parses simple pseudo-classes such as `:hover`,
 selector specificity `b` bucket. AffineUI depends on browser cascade
 ordering where `.btn:focus` outranks `.btn`.
 
+### css: parse common framework shorthands
+
+Adds `border-radius`, `border-color`, `background`, `box-shadow`, `gap`,
+`row-gap`, and `column-gap` to the generated property table, including
+parsing, serialization, and declaration tests for framework stylesheets.
+
 ## Syncing Into AffineUI
 
 From the AffineUI repo:

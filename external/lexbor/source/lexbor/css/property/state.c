@@ -11,6 +11,7 @@
 #include "lexbor/css/unit.h"
 #include "lexbor/css/property/state.h"
 #include "lexbor/css/property/res.h"
+#include "lexbor/core/str.h"
 
 #define LEXBOR_STR_RES_MAP_HEX
 #define LEXBOR_STR_RES_MAP_LOWERCASE
@@ -52,6 +53,8 @@ static bool
 lxb_css_property_state_color_hsla_old(lxb_css_parser_t *parser,
                                       const lxb_css_syntax_token_t *token,
                                       lxb_css_value_color_hsla_t *hsl);
+static bool
+lxb_css_property_state_is_global(lxb_css_value_type_t type);
 
 static bool
 lxb_css_property_state_length(lxb_css_parser_t *parser,
@@ -1703,6 +1706,152 @@ lxb_css_property_state_box_sizing(lxb_css_parser_t *parser,
     return lxb_css_parser_success(parser);
 }
 
+static bool
+lxb_css_property_state_box_shadow_length(lxb_css_parser_t *parser,
+                                         const lxb_css_syntax_token_t *token,
+                                         lxb_css_value_length_type_t *length,
+                                         bool allow_negative)
+{
+    lxb_css_value_type_t type;
+
+    switch (token->type) {
+        case LXB_CSS_SYNTAX_TOKEN_DIMENSION:
+            type = LXB_CSS_VALUE__LENGTH;
+            break;
+
+        case LXB_CSS_SYNTAX_TOKEN_NUMBER:
+            type = LXB_CSS_VALUE__NUMBER;
+            break;
+
+        default:
+            return false;
+    }
+
+    if (!lxb_css_property_state_length(parser, token, &length->length)) {
+        return false;
+    }
+
+    if (!allow_negative && length->length.num < 0) {
+        return false;
+    }
+
+    length->type = type;
+
+    return true;
+}
+
+bool
+lxb_css_property_state_box_shadow(lxb_css_parser_t *parser,
+                                  const lxb_css_syntax_token_t *token, void *ctx)
+{
+    bool inset;
+    lxb_status_t status;
+    unsigned length_count;
+    lxb_css_value_type_t type;
+    lxb_css_value_length_type_t lengths[4];
+    lxb_css_property_box_shadow_t shadow = {0};
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    static const lexbor_str_t str_inset = lexbor_str("inset");
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT) {
+        type = lxb_css_value_by_name(lxb_css_syntax_token_ident(token)->data,
+                                     lxb_css_syntax_token_ident(token)->length);
+
+        if (lxb_css_property_state_is_global(type)
+            || type == LXB_CSS_VALUE_NONE)
+        {
+            shadow.type = type;
+
+            lxb_css_syntax_parser_consume(parser);
+            token = lxb_css_syntax_parser_token_wo_ws(parser);
+            lxb_css_property_state_check_token(parser, token);
+
+            if (token->type != LXB_CSS_SYNTAX_TOKEN__END) {
+                return lxb_css_parser_failed(parser);
+            }
+
+            *((lxb_css_property_box_shadow_t *) declar->u.user) = shadow;
+            return lxb_css_parser_success(parser);
+        }
+    }
+
+    inset = false;
+    length_count = 0;
+    shadow.type = LXB_CSS_BOX_SHADOW__LENGTH;
+    shadow.blur_radius.type = LXB_CSS_VALUE__UNDEF;
+    shadow.spread_radius.type = LXB_CSS_VALUE__UNDEF;
+    shadow.color.type = LXB_CSS_VALUE__UNDEF;
+
+    do {
+        if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT
+            && lxb_css_syntax_token_ident(token)->length == str_inset.length
+            && lexbor_str_data_ncasecmp(lxb_css_syntax_token_ident(token)->data,
+                                        str_inset.data, str_inset.length))
+        {
+            if (inset) {
+                return lxb_css_parser_failed(parser);
+            }
+
+            inset = true;
+            lxb_css_syntax_parser_consume(parser);
+        }
+        else {
+            if (shadow.color.type == LXB_CSS_VALUE__UNDEF) {
+                if (lxb_css_property_state_color_handler(parser, token,
+                                                         &shadow.color,
+                                                         &status))
+                {
+                    goto next;
+                }
+
+                if (status != LXB_STATUS_OK) {
+                    return lxb_css_parser_failed(parser);
+                }
+            }
+
+            if (length_count == 4) {
+                return lxb_css_parser_failed(parser);
+            }
+
+            if (!lxb_css_property_state_box_shadow_length(parser, token,
+                                      &lengths[length_count],
+                                      length_count != 2))
+            {
+                return lxb_css_parser_failed(parser);
+            }
+
+            length_count++;
+        }
+
+next:
+
+        token = lxb_css_syntax_parser_token_wo_ws(parser);
+        lxb_css_property_state_check_token(parser, token);
+    }
+    while (token->type != LXB_CSS_SYNTAX_TOKEN__END);
+
+    if (length_count < 2) {
+        return lxb_css_parser_failed(parser);
+    }
+
+    shadow.inset = inset;
+    shadow.offset_x = lengths[0];
+    shadow.offset_y = lengths[1];
+
+    if (length_count > 2) {
+        shadow.blur_radius = lengths[2];
+    }
+
+    if (length_count > 3) {
+        shadow.spread_radius = lengths[3];
+    }
+
+    *((lxb_css_property_box_shadow_t *) declar->u.user) = shadow;
+
+    return lxb_css_parser_success(parser);
+}
+
 bool
 lxb_css_property_state_min_width(lxb_css_parser_t *parser,
                                  const lxb_css_syntax_token_t *token, void *ctx)
@@ -1955,6 +2104,112 @@ lxb_css_property_state_padding_left(lxb_css_parser_t *parser,
 }
 
 static bool
+lxb_css_property_state_is_global(lxb_css_value_type_t type)
+{
+    switch (type) {
+        case LXB_CSS_VALUE_INITIAL:
+        case LXB_CSS_VALUE_INHERIT:
+        case LXB_CSS_VALUE_UNSET:
+        case LXB_CSS_VALUE_REVERT:
+            return true;
+
+        default:
+            return false;
+    }
+}
+
+static bool
+lxb_css_property_state_gap_value(lxb_css_parser_t *parser,
+                                 const lxb_css_syntax_token_t *token,
+                                 lxb_css_value_length_percentage_t *value,
+                                 bool allow_global)
+{
+    lxb_css_value_type_t type;
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT) {
+        type = lxb_css_value_by_name(lxb_css_syntax_token_ident(token)->data,
+                                     lxb_css_syntax_token_ident(token)->length);
+
+        if (type == LXB_CSS_VALUE_NORMAL
+            || (allow_global && lxb_css_property_state_is_global(type)))
+        {
+            value->type = type;
+            lxb_css_syntax_parser_consume(parser);
+            return true;
+        }
+
+        return false;
+    }
+
+    return lxb_css_property_state_length_percentage(parser, token, value);
+}
+
+bool
+lxb_css_property_state_gap(lxb_css_parser_t *parser,
+                           const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    if (!lxb_css_property_state_gap_value(parser, token,
+                                          &declar->u.gap->row, true))
+    {
+        return lxb_css_parser_failed(parser);
+    }
+
+    if (lxb_css_property_state_is_global(declar->u.gap->row.type)) {
+        declar->u.gap->column.type = declar->u.gap->row.type;
+        return lxb_css_parser_success(parser);
+    }
+
+    token = lxb_css_syntax_parser_token_wo_ws(parser);
+    lxb_css_property_state_check_token(parser, token);
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN__END) {
+        declar->u.gap->column = declar->u.gap->row;
+        return lxb_css_parser_success(parser);
+    }
+
+    if (!lxb_css_property_state_gap_value(parser, token,
+                                          &declar->u.gap->column, false))
+    {
+        return lxb_css_parser_failed(parser);
+    }
+
+    token = lxb_css_syntax_parser_token_wo_ws(parser);
+    lxb_css_property_state_check_token(parser, token);
+
+    if (token->type != LXB_CSS_SYNTAX_TOKEN__END) {
+        return lxb_css_parser_failed(parser);
+    }
+
+    return lxb_css_parser_success(parser);
+}
+
+bool
+lxb_css_property_state_row_gap(lxb_css_parser_t *parser,
+                               const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    return lxb_css_property_state_gap_value(parser, token,
+                                            declar->u.row_gap, true)
+        ? lxb_css_parser_success(parser)
+        : lxb_css_parser_failed(parser);
+}
+
+bool
+lxb_css_property_state_column_gap(lxb_css_parser_t *parser,
+                                  const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    return lxb_css_property_state_gap_value(parser, token,
+                                            declar->u.column_gap, true)
+        ? lxb_css_parser_success(parser)
+        : lxb_css_parser_failed(parser);
+}
+
+static bool
 lxb_css_property_state_line_width_style_color(lxb_css_parser_t *parser,
                                               const lxb_css_syntax_token_t *token,
                                               lxb_css_property_border_t *border)
@@ -2143,6 +2398,74 @@ lxb_css_property_state_border_left(lxb_css_parser_t *parser,
     return lxb_css_property_state_border(parser, token, ctx);
 }
 
+static void
+lxb_css_property_state_border_color_apply(lxb_css_property_border_color_t *border,
+                                          lxb_css_value_color_t values[4],
+                                          unsigned count)
+{
+    border->top = values[0];
+    border->right = (count > 1) ? values[1] : values[0];
+    border->bottom = (count > 2) ? values[2] : values[0];
+    border->left = (count > 3) ? values[3] : border->right;
+}
+
+static void
+lxb_css_property_state_border_color_set_global(
+    lxb_css_property_border_color_t *border, lxb_css_value_type_t type)
+{
+    border->top.type = type;
+    border->right.type = type;
+    border->bottom.type = type;
+    border->left.type = type;
+}
+
+bool
+lxb_css_property_state_border_color(lxb_css_parser_t *parser,
+                                    const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_status_t status;
+    lxb_css_value_type_t type;
+    lxb_css_rule_declaration_t *declar = ctx;
+    lxb_css_value_color_t values[4] = {{0}, {0}, {0}, {0}};
+    unsigned count = 0;
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT) {
+        type = lxb_css_value_by_name(lxb_css_syntax_token_ident(token)->data,
+                                     lxb_css_syntax_token_ident(token)->length);
+
+        if (lxb_css_property_state_is_global(type)) {
+            lxb_css_property_state_border_color_set_global(
+                declar->u.border_color, type);
+
+            lxb_css_syntax_parser_consume(parser);
+            return lxb_css_parser_success(parser);
+        }
+    }
+
+    do {
+        if (count == 4) {
+            return lxb_css_parser_failed(parser);
+        }
+
+        if (!lxb_css_property_state_color_handler(parser, token,
+                                                  &values[count], &status))
+        {
+            return lxb_css_parser_failed(parser);
+        }
+
+        count++;
+
+        token = lxb_css_syntax_parser_token_wo_ws(parser);
+        lxb_css_property_state_check_token(parser, token);
+    }
+    while (token->type != LXB_CSS_SYNTAX_TOKEN__END);
+
+    lxb_css_property_state_border_color_apply(declar->u.border_color,
+                                              values, count);
+
+    return lxb_css_parser_success(parser);
+}
+
 bool
 lxb_css_property_state_border_top_color(lxb_css_parser_t *parser,
                                         const lxb_css_syntax_token_t *token, void *ctx)
@@ -2169,6 +2492,315 @@ lxb_css_property_state_border_left_color(lxb_css_parser_t *parser,
                                          const lxb_css_syntax_token_t *token, void *ctx)
 {
     return lxb_css_property_state_color(parser, token, ctx);
+}
+
+static void
+lxb_css_property_state_border_radius_set_global(
+    lxb_css_property_border_radius_corner_t *corner, lxb_css_value_type_t type)
+{
+    corner->h.type = type;
+    corner->v.type = type;
+}
+
+static bool
+lxb_css_property_state_border_radius_end(lxb_css_parser_t *parser)
+{
+    const lxb_css_syntax_token_t *token;
+
+    token = lxb_css_syntax_parser_token_wo_ws(parser);
+    lxb_css_property_state_check_token(parser, token);
+
+    return token->type == LXB_CSS_SYNTAX_TOKEN__END;
+}
+
+static bool
+lxb_css_property_state_border_radius_corner(
+    lxb_css_parser_t *parser, const lxb_css_syntax_token_t *token,
+    lxb_css_property_border_radius_corner_t *corner)
+{
+    lxb_css_value_type_t type;
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT) {
+        type = lxb_css_value_by_name(lxb_css_syntax_token_ident(token)->data,
+                                     lxb_css_syntax_token_ident(token)->length);
+
+        if (!lxb_css_property_state_is_global(type)) {
+            return false;
+        }
+
+        lxb_css_property_state_border_radius_set_global(corner, type);
+        lxb_css_syntax_parser_consume(parser);
+
+        return lxb_css_property_state_border_radius_end(parser);
+    }
+
+    if (!lxb_css_property_state_length_percentage(parser, token, &corner->h)) {
+        return false;
+    }
+
+    token = lxb_css_syntax_parser_token_wo_ws(parser);
+    lxb_css_property_state_check_token(parser, token);
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN__END) {
+        corner->v = corner->h;
+        return true;
+    }
+
+    if (!lxb_css_property_state_length_percentage(parser, token, &corner->v)) {
+        return false;
+    }
+
+    return lxb_css_property_state_border_radius_end(parser);
+}
+
+static const lxb_css_value_length_percentage_t *
+lxb_css_property_state_border_radius_value(
+    const lxb_css_value_length_percentage_t values[4], unsigned count,
+    unsigned index)
+{
+    switch (count) {
+        case 1:
+            return &values[0];
+
+        case 2:
+            return (index == 0 || index == 2) ? &values[0] : &values[1];
+
+        case 3:
+            return (index == 0) ? &values[0]
+                 : (index == 2) ? &values[2]
+                                : &values[1];
+
+        default:
+            return &values[index];
+    }
+}
+
+static bool
+lxb_css_property_state_border_radius_list(
+    lxb_css_parser_t *parser, const lxb_css_syntax_token_t *token,
+    lxb_css_value_length_percentage_t values[4], unsigned *count,
+    bool allow_slash, bool *slash)
+{
+    *count = 0;
+    *slash = false;
+
+    while (true) {
+        if (*count == 4) {
+            return false;
+        }
+
+        if (!lxb_css_property_state_length_percentage(parser, token,
+                                                      &values[*count]))
+        {
+            return false;
+        }
+
+        (*count)++;
+
+        token = lxb_css_syntax_parser_token_wo_ws(parser);
+        lxb_css_property_state_check_token(parser, token);
+
+        if (token->type == LXB_CSS_SYNTAX_TOKEN__END) {
+            return true;
+        }
+
+        if (token->type == LXB_CSS_SYNTAX_TOKEN_DELIM
+            && lxb_css_syntax_token_delim(token)->character == '/')
+        {
+            if (!allow_slash) {
+                return false;
+            }
+
+            lxb_css_syntax_parser_consume(parser);
+            *slash = true;
+
+            return true;
+        }
+    }
+}
+
+static void
+lxb_css_property_state_border_radius_assign(
+    lxb_css_property_border_radius_t *radius,
+    const lxb_css_value_length_percentage_t h[4], unsigned h_count,
+    const lxb_css_value_length_percentage_t v[4], unsigned v_count)
+{
+    radius->top_left.h =
+        *lxb_css_property_state_border_radius_value(h, h_count, 0);
+    radius->top_right.h =
+        *lxb_css_property_state_border_radius_value(h, h_count, 1);
+    radius->bottom_right.h =
+        *lxb_css_property_state_border_radius_value(h, h_count, 2);
+    radius->bottom_left.h =
+        *lxb_css_property_state_border_radius_value(h, h_count, 3);
+
+    radius->top_left.v =
+        *lxb_css_property_state_border_radius_value(v, v_count, 0);
+    radius->top_right.v =
+        *lxb_css_property_state_border_radius_value(v, v_count, 1);
+    radius->bottom_right.v =
+        *lxb_css_property_state_border_radius_value(v, v_count, 2);
+    radius->bottom_left.v =
+        *lxb_css_property_state_border_radius_value(v, v_count, 3);
+}
+
+bool
+lxb_css_property_state_border_radius(lxb_css_parser_t *parser,
+                                     const lxb_css_syntax_token_t *token,
+                                     void *ctx)
+{
+    bool slash;
+    unsigned h_count, v_count;
+    lxb_css_value_type_t type;
+    lxb_css_value_length_percentage_t h[4];
+    lxb_css_value_length_percentage_t v[4];
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT) {
+        type = lxb_css_value_by_name(lxb_css_syntax_token_ident(token)->data,
+                                     lxb_css_syntax_token_ident(token)->length);
+
+        if (!lxb_css_property_state_is_global(type)) {
+            return lxb_css_parser_failed(parser);
+        }
+
+        lxb_css_property_state_border_radius_set_global(
+            &declar->u.border_radius->top_left, type);
+        lxb_css_property_state_border_radius_set_global(
+            &declar->u.border_radius->top_right, type);
+        lxb_css_property_state_border_radius_set_global(
+            &declar->u.border_radius->bottom_right, type);
+        lxb_css_property_state_border_radius_set_global(
+            &declar->u.border_radius->bottom_left, type);
+
+        lxb_css_syntax_parser_consume(parser);
+
+        return lxb_css_property_state_border_radius_end(parser)
+            ? lxb_css_parser_success(parser)
+            : lxb_css_parser_failed(parser);
+    }
+
+    if (!lxb_css_property_state_border_radius_list(parser, token, h,
+                                                  &h_count, true, &slash))
+    {
+        return lxb_css_parser_failed(parser);
+    }
+
+    if (slash) {
+        token = lxb_css_syntax_parser_token_wo_ws(parser);
+        lxb_css_property_state_check_token(parser, token);
+
+        if (!lxb_css_property_state_border_radius_list(parser, token, v,
+                                                      &v_count, false, &slash))
+        {
+            return lxb_css_parser_failed(parser);
+        }
+    }
+    else {
+        for (unsigned i = 0; i < h_count; i++) {
+            v[i] = h[i];
+        }
+
+        v_count = h_count;
+    }
+
+    lxb_css_property_state_border_radius_assign(declar->u.border_radius, h,
+                                                h_count, v, v_count);
+
+    return lxb_css_parser_success(parser);
+}
+
+bool
+lxb_css_property_state_border_top_left_radius(lxb_css_parser_t *parser,
+                                              const lxb_css_syntax_token_t *token,
+                                              void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    return lxb_css_property_state_border_radius_corner(
+        parser, token, declar->u.border_top_left_radius)
+        ? lxb_css_parser_success(parser)
+        : lxb_css_parser_failed(parser);
+}
+
+bool
+lxb_css_property_state_border_top_right_radius(lxb_css_parser_t *parser,
+                                               const lxb_css_syntax_token_t *token,
+                                               void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    return lxb_css_property_state_border_radius_corner(
+        parser, token, declar->u.border_top_right_radius)
+        ? lxb_css_parser_success(parser)
+        : lxb_css_parser_failed(parser);
+}
+
+bool
+lxb_css_property_state_border_bottom_right_radius(
+    lxb_css_parser_t *parser, const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    return lxb_css_property_state_border_radius_corner(
+        parser, token, declar->u.border_bottom_right_radius)
+        ? lxb_css_parser_success(parser)
+        : lxb_css_parser_failed(parser);
+}
+
+bool
+lxb_css_property_state_border_bottom_left_radius(
+    lxb_css_parser_t *parser, const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    return lxb_css_property_state_border_radius_corner(
+        parser, token, declar->u.border_bottom_left_radius)
+        ? lxb_css_parser_success(parser)
+        : lxb_css_parser_failed(parser);
+}
+
+bool
+lxb_css_property_state_background(lxb_css_parser_t *parser,
+                                  const lxb_css_syntax_token_t *token, void *ctx)
+{
+    lxb_status_t status;
+    lxb_css_value_type_t type;
+    lxb_css_value_color_t color;
+    lxb_css_rule_declaration_t *declar = ctx;
+
+    if (token->type == LXB_CSS_SYNTAX_TOKEN_IDENT) {
+        type = lxb_css_value_by_name(lxb_css_syntax_token_ident(token)->data,
+                                     lxb_css_syntax_token_ident(token)->length);
+
+        if (lxb_css_property_state_is_global(type)) {
+            declar->u.background->color.type = type;
+
+            lxb_css_syntax_parser_consume(parser);
+            return lxb_css_parser_success(parser);
+        }
+    }
+
+    do {
+        color.type = LXB_CSS_VALUE__UNDEF;
+
+        if (lxb_css_property_state_color_handler(parser, token, &color, &status)) {
+            declar->u.background->color = color;
+        }
+        else {
+            if (status != LXB_STATUS_OK) {
+                return lxb_css_parser_failed(parser);
+            }
+
+            lxb_css_syntax_parser_consume(parser);
+        }
+
+        token = lxb_css_syntax_parser_token_wo_ws(parser);
+        lxb_css_property_state_check_token(parser, token);
+    }
+    while (token->type != LXB_CSS_SYNTAX_TOKEN__END);
+
+    return lxb_css_parser_success(parser);
 }
 
 bool

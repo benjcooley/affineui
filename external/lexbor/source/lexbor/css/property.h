@@ -66,6 +66,17 @@ typedef struct {
 lxb_css_property_box_sizing_t;
 
 typedef struct {
+    lxb_css_box_shadow_type_t  type;
+    lxb_css_value_length_type_t offset_x;
+    lxb_css_value_length_type_t offset_y;
+    lxb_css_value_length_type_t blur_radius;
+    lxb_css_value_length_type_t spread_radius;
+    lxb_css_value_color_t       color;
+    bool                        inset;
+}
+lxb_css_property_box_shadow_t;
+
+typedef struct {
     lxb_css_property_margin_top_t    top;
     lxb_css_property_margin_right_t  right;
     lxb_css_property_margin_bottom_t bottom;
@@ -82,6 +93,15 @@ typedef struct {
 lxb_css_property_padding_t;
 
 typedef struct {
+    lxb_css_value_length_percentage_t row;
+    lxb_css_value_length_percentage_t column;
+}
+lxb_css_property_gap_t;
+
+typedef lxb_css_value_length_percentage_t lxb_css_property_row_gap_t;
+typedef lxb_css_value_length_percentage_t lxb_css_property_column_gap_t;
+
+typedef struct {
     lxb_css_value_type_t        style;
     lxb_css_value_length_type_t width;
     lxb_css_value_color_t       color;
@@ -93,10 +113,46 @@ typedef lxb_css_property_border_t lxb_css_property_border_right_t;
 typedef lxb_css_property_border_t lxb_css_property_border_bottom_t;
 typedef lxb_css_property_border_t lxb_css_property_border_left_t;
 
+typedef struct {
+    lxb_css_value_color_t top;
+    lxb_css_value_color_t right;
+    lxb_css_value_color_t bottom;
+    lxb_css_value_color_t left;
+}
+lxb_css_property_border_color_t;
+
 typedef lxb_css_value_color_t lxb_css_property_border_top_color_t;
 typedef lxb_css_value_color_t lxb_css_property_border_right_color_t;
 typedef lxb_css_value_color_t lxb_css_property_border_bottom_color_t;
 typedef lxb_css_value_color_t lxb_css_property_border_left_color_t;
+
+typedef struct {
+    lxb_css_value_length_percentage_t h;
+    lxb_css_value_length_percentage_t v;
+}
+lxb_css_property_border_radius_corner_t;
+
+typedef struct {
+    lxb_css_property_border_radius_corner_t top_left;
+    lxb_css_property_border_radius_corner_t top_right;
+    lxb_css_property_border_radius_corner_t bottom_right;
+    lxb_css_property_border_radius_corner_t bottom_left;
+}
+lxb_css_property_border_radius_t;
+
+typedef lxb_css_property_border_radius_corner_t
+lxb_css_property_border_top_left_radius_t;
+typedef lxb_css_property_border_radius_corner_t
+lxb_css_property_border_top_right_radius_t;
+typedef lxb_css_property_border_radius_corner_t
+lxb_css_property_border_bottom_right_radius_t;
+typedef lxb_css_property_border_radius_corner_t
+lxb_css_property_border_bottom_left_radius_t;
+
+typedef struct {
+    lxb_css_value_color_t color;
+}
+lxb_css_property_background_t;
 
 typedef lxb_css_value_color_t lxb_css_property_background_color_t;
 
@@ -546,6 +602,18 @@ LXB_API lxb_status_t
 lxb_css_property_box_sizing_serialize(const void *style,
                                       lexbor_serialize_cb_f cb, void *ctx);
 
+/* Box-shadow. */
+
+LXB_API void *
+lxb_css_property_box_shadow_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_box_shadow_destroy(lxb_css_memory_t *memory,
+                                    void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_box_shadow_serialize(const void *style,
+                                      lexbor_serialize_cb_f cb, void *ctx);
+
 /* Min-width. */
 
 LXB_API void *
@@ -714,6 +782,42 @@ LXB_API lxb_status_t
 lxb_css_property_padding_left_serialize(const void *style,
                                         lexbor_serialize_cb_f cb, void *ctx);
 
+/* Gap. */
+
+LXB_API void *
+lxb_css_property_gap_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_gap_destroy(lxb_css_memory_t *memory,
+                             void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_gap_serialize(const void *style,
+                               lexbor_serialize_cb_f cb, void *ctx);
+
+/* Row-gap. */
+
+LXB_API void *
+lxb_css_property_row_gap_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_row_gap_destroy(lxb_css_memory_t *memory,
+                                 void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_row_gap_serialize(const void *style,
+                                   lexbor_serialize_cb_f cb, void *ctx);
+
+/* Column-gap. */
+
+LXB_API void *
+lxb_css_property_column_gap_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_column_gap_destroy(lxb_css_memory_t *memory,
+                                    void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_column_gap_serialize(const void *style,
+                                      lexbor_serialize_cb_f cb, void *ctx);
+
 /* Border. */
 
 LXB_API void *
@@ -774,6 +878,18 @@ LXB_API lxb_status_t
 lxb_css_property_border_left_serialize(const void *style,
                                        lexbor_serialize_cb_f cb, void *ctx);
 
+/* Border-color. */
+
+LXB_API void *
+lxb_css_property_border_color_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_border_color_destroy(lxb_css_memory_t *memory,
+                                      void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_border_color_serialize(const void *style,
+                                        lexbor_serialize_cb_f cb, void *ctx);
+
 /* Border-top-color. */
 
 LXB_API void *
@@ -821,6 +937,82 @@ lxb_css_property_border_left_color_destroy(lxb_css_memory_t *memory,
 LXB_API lxb_status_t
 lxb_css_property_border_left_color_serialize(const void *style,
                                              lexbor_serialize_cb_f cb, void *ctx);
+
+/* Border-radius. */
+
+LXB_API void *
+lxb_css_property_border_radius_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_border_radius_destroy(lxb_css_memory_t *memory,
+                                       void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_border_radius_serialize(const void *style,
+                                         lexbor_serialize_cb_f cb, void *ctx);
+
+/* Border-top-left-radius. */
+
+LXB_API void *
+lxb_css_property_border_top_left_radius_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_border_top_left_radius_destroy(lxb_css_memory_t *memory,
+                                                void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_border_top_left_radius_serialize(const void *style,
+                                                  lexbor_serialize_cb_f cb,
+                                                  void *ctx);
+
+/* Border-top-right-radius. */
+
+LXB_API void *
+lxb_css_property_border_top_right_radius_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_border_top_right_radius_destroy(lxb_css_memory_t *memory,
+                                                 void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_border_top_right_radius_serialize(const void *style,
+                                                   lexbor_serialize_cb_f cb,
+                                                   void *ctx);
+
+/* Border-bottom-right-radius. */
+
+LXB_API void *
+lxb_css_property_border_bottom_right_radius_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_border_bottom_right_radius_destroy(lxb_css_memory_t *memory,
+                                                   void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_border_bottom_right_radius_serialize(const void *style,
+                                                      lexbor_serialize_cb_f cb,
+                                                      void *ctx);
+
+/* Border-bottom-left-radius. */
+
+LXB_API void *
+lxb_css_property_border_bottom_left_radius_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_border_bottom_left_radius_destroy(lxb_css_memory_t *memory,
+                                                  void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_border_bottom_left_radius_serialize(const void *style,
+                                                     lexbor_serialize_cb_f cb,
+                                                     void *ctx);
+
+/* Background. */
+
+LXB_API void *
+lxb_css_property_background_create(lxb_css_memory_t *memory);
+
+LXB_API void *
+lxb_css_property_background_destroy(lxb_css_memory_t *memory,
+                                    void *style, bool self_destroy);
+LXB_API lxb_status_t
+lxb_css_property_background_serialize(const void *style,
+                                      lexbor_serialize_cb_f cb, void *ctx);
 
 /* Background-color. */
 

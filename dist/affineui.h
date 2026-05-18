@@ -14,11 +14,9 @@
 //   - stb_*        MIT / PD   https://github.com/nothings/stb
 //   - fontstash    zlib       https://github.com/memononen/fontstash
 //
-// lexbor and Yoga are too large to inline as a single TU and must
-// be linked as separate libraries. Single-header deps (sokol,
-// nanovg, stb_*, fontstash) are pulled in by the vendored-C
-// wrappers at the bottom of affineui.cpp — keep ``external/`` on
-// the include path when building this amalgamation.
+// Vendored sources are generated into this implementation file from
+// curated external snapshots; end users include only affineui.h and
+// compile only affineui.cpp.
 
 #ifndef AFFINEUI_AMALGAMATED_H
 #define AFFINEUI_AMALGAMATED_H
@@ -1381,8 +1379,9 @@ public:
     /// blocks in the cascade. Call this once at setup for app theming.
     void css(std::string_view source);
 
-    /// Load HTML from a file. Returns true on success. Convenience —
-    /// equivalent to read-the-file-and-call-html.
+    /// Load HTML from a file. Returns true on success. Linked local
+    /// resources such as `<link rel="stylesheet" href="...">` resolve
+    /// relative to the HTML file's directory.
     bool load(std::string_view path);
 
     // ── Rendering ───────────────────────────────────────────────────

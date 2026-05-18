@@ -7,9 +7,8 @@ Output:
     <out>/affineui.cpp  — all implementation, including vendored deps
 
 End-users copy these two files into their project. No CMake required
-for AffineUI itself — they still link lexbor and Yoga separately and
-add `external/` to the include path so `sokol_app.h`, `nanovg.h`, and
-the stb headers resolve when `affineui.cpp` is compiled.
+for AffineUI itself. Vendored dependencies are generated into the
+implementation file from the curated external snapshots.
 
 Strategy (sqlite-amalgamation style):
   1. Concatenate the public headers in topological order into
@@ -17,13 +16,13 @@ Strategy (sqlite-amalgamation style):
      directives; dedupe top-level ``#include <stdlib>`` directives to
      a single banner block. Wrap the result in one outer include
      guard.
-  2. Concatenate the internal headers, then our C++ implementation
+  2. Generate C++-compatible external source blocks and flatten them
+     into ``affineui.cpp``.
+  3. Concatenate the internal headers, then our C++ implementation
      translation units, then the vendored-C wrappers, into
-     ``affineui.cpp``. Strip internal includes (their content is
-     already inlined); leave vendored ``#include "name.h"`` and any
-     indented ``#include <…>`` (conditional on a platform ``#if``)
-     where they sit. Wrap the C wrappers in a single ``extern "C"``
-     block so their symbols keep C linkage when compiled as C++.
+     ``affineui.cpp``. Strip internal and vendored includes whose
+     content is already inlined; leave conditional platform includes
+     where they sit.
 
 The output is deterministic: the same input tree always produces
 byte-identical files. A CI smoke test compiles the amalgamation to
@@ -35,8 +34,15 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from lexbor_cpp_compat import (copy_source_tree, default_platform,
+                               lexbor_c_sources, macos_sdk_flags,
+                               repair_with_compiler, source_root,
+                               transform as transform_lexbor,
+                               unprefixed_global_symbols)
 
 # ── Source manifest ──────────────────────────────────────────────────────────
 # Ordering matters: each list is consumed top-to-bottom and the result is
@@ -89,6 +95,7 @@ INTERNAL_HEADERS = [
     "src/engine/rasterizer.h",
     "src/engine/engine.h",
     "src/layout/yoga_adapter.h",
+    "src/imm/imm_runtime.h",
 ]
 
 # Our C++ TUs. Order here is not load-bearing (declarations come from the
@@ -154,12 +161,54 @@ VENDORED_C_TUS = [
     "src/paint/sokol_impl.c",
 ]
 
+REQUIRED_EXTERNAL_FILES = [
+    "external/yoga/yoga/Yoga.h",
+    "external/nanovg/src/nanovg.c",
+    "external/nanovg/src/nanovg.h",
+    "external/nanovg/src/nanovg_gl.h",
+    "external/nanovg/src/nanovg_gl_utils.h",
+    "external/nanovg/src/fontstash.h",
+    "external/nanovg/src/stb_image.h",
+    "external/nanovg/src/stb_truetype.h",
+    "external/sokol/sokol_app.h",
+    "external/sokol/sokol_log.h",
+]
+
 # Public headers always live under ``include/affineui/``; internal/engine
 # headers under ``src/internal/``, ``src/engine/``, and a single
 # ``src/layout/yoga_adapter.h``. An ``#include "<prefix>…"`` matching one
 # of these prefixes refers to a file that has already been inlined and
 # must be stripped from its referring TU.
-INTERNAL_PREFIXES = ("affineui/", "internal/", "engine/", "layout/")
+INTERNAL_PREFIXES = ("affineui/", "internal/", "engine/", "layout/", "imm/")
+INLINED_EXTERNAL_PREFIXES = (
+    "lexbor/",
+    "yoga/",
+    "sokol_app.h",
+    "sokol_log.h",
+    "nanovg.h",
+    "nanovg_gl.h",
+    "nanovg_gl_utils.h",
+    "fontstash.h",
+    "stb_image.h",
+    "stb_truetype.h",
+)
+LEXBOR_REPEATABLE_HEADERS = {
+    "lexbor/core/cpp_compat.h",
+    "lexbor/core/cpp_compat_undef.h",
+    "lexbor/core/str_res.h",
+    "lexbor/html/interface_res.h",
+    "lexbor/html/tag_res.h",
+    "lexbor/tag/res.h",
+}
+REPEATABLE_EXTERNAL_HEADERS = {
+    "external/nanovg/src/fontstash.h",
+    "external/nanovg/src/nanovg_gl.h",
+    "external/nanovg/src/nanovg_gl_utils.h",
+    "external/nanovg/src/stb_image.h",
+    "external/nanovg/src/stb_truetype.h",
+    "external/sokol/sokol_app.h",
+    "external/sokol/sokol_log.h",
+}
 
 # ── Regexes ──────────────────────────────────────────────────────────────────
 # We match preprocessor directives only when ``#`` is directly followed by
@@ -184,10 +233,15 @@ SYSTEM_INCLUDE_RE   = re.compile(r'^#include\s*<([^>]+)>\s*(?://.*|/\*.*)?$')
 # still parses as an include. We decide whether to strip by the path
 # prefix, not by column.
 QUOTED_INCLUDE_RE   = re.compile(r'^\s*#\s*include\s*"([^"]+)"\s*(?://.*|/\*.*)?$')
+ANY_INCLUDE_RE      = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]\s*(?://.*|/\*.*)?$')
 
 
 def is_internal_include(name: str) -> bool:
     return any(name.startswith(p) for p in INTERNAL_PREFIXES)
+
+
+def is_inlined_external_include(name: str) -> bool:
+    return any(name.startswith(p) for p in INLINED_EXTERNAL_PREFIXES)
 
 
 # ── Processing ───────────────────────────────────────────────────────────────
@@ -199,7 +253,9 @@ class FileBlock:
     system_includes: list[str] = field(default_factory=list)
 
 
-def process_file(root: Path, rel_path: str) -> FileBlock:
+def process_file(root: Path, rel_path: str, *,
+                 expand_external: bool = False,
+                 emitted_external_headers: set[Path] | None = None) -> FileBlock:
     """
     Read a file, strip ``#pragma once`` and inlined-internal ``#include``s,
     capture top-level ``#include <…>`` directives, and return the rest.
@@ -207,13 +263,26 @@ def process_file(root: Path, rel_path: str) -> FileBlock:
     Indented system includes (inside ``#if`` conditionals) are left intact:
     relocating them to the top would change their conditionality.
     """
-    text = (root / rel_path).read_text(encoding="utf-8")
+    path = root / rel_path
+    text = path.read_text(encoding="utf-8")
     out_lines: list[str] = []
     syshdr_order: list[str] = []
     seen_sys: set[str] = set()
 
     for line in text.splitlines():
         if PRAGMA_ONCE_RE.match(line):
+            continue
+        m = ANY_INCLUDE_RE.match(line)
+        if m and expand_external:
+            target = resolve_external_include(root, path, m.group(1))
+            if target is not None:
+                if emitted_external_headers is None:
+                    emitted_external_headers = set()
+                out_lines.append(expand_external_file(root, target,
+                                                      emitted_external_headers))
+                continue
+        if m and is_inlined_external_include(m.group(1)):
+            # Vendored source is inlined into affineui.cpp.
             continue
         m = SYSTEM_INCLUDE_RE.match(line)
         if m:
@@ -226,7 +295,7 @@ def process_file(root: Path, rel_path: str) -> FileBlock:
         if m and is_internal_include(m.group(1)):
             # Already inlined upstream in the amalgamation.
             continue
-        out_lines.append(line)
+        out_lines.append(line.rstrip())
 
     # Trim trailing blank lines so concatenated blocks don't accumulate gaps.
     while out_lines and not out_lines[-1].strip():
@@ -257,11 +326,9 @@ def banner(version: str, kind: str) -> str:
         "//   - stb_*        MIT / PD   https://github.com/nothings/stb\n"
         "//   - fontstash    zlib       https://github.com/memononen/fontstash\n"
         "//\n"
-        "// lexbor and Yoga are too large to inline as a single TU and must\n"
-        "// be linked as separate libraries. Single-header deps (sokol,\n"
-        "// nanovg, stb_*, fontstash) are pulled in by the vendored-C\n"
-        "// wrappers at the bottom of affineui.cpp — keep ``external/`` on\n"
-        "// the include path when building this amalgamation.\n"
+        "// Vendored sources are generated into this implementation file from\n"
+        "// curated external snapshots; end users include only affineui.h and\n"
+        "// compile only affineui.cpp.\n"
     )
 
 
@@ -282,6 +349,361 @@ def render_block(block: FileBlock) -> str:
         f"// {rule}\n"
     )
     return header + block.body + "\n"
+
+
+def render_external_header(rel_path: str) -> str:
+    rule = "─" * 72
+    return (
+        f"// {rule}\n"
+        f"// {rel_path}\n"
+        f"// {rule}\n"
+    )
+
+
+def repo_rel(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def resolve_external_include(root: Path, current_file: Path | None,
+                             name: str) -> Path | None:
+    candidates: list[Path] = []
+    if current_file is not None:
+        candidates.append(current_file.parent / name)
+
+    external_roots = [
+        root / "external" / "nanovg" / "src",
+        root / "external" / "sokol",
+        root / "external" / "yoga",
+    ]
+    for base in external_roots:
+        candidates.append(base / name)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def read_external_text(root: Path, path: Path) -> str:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    rel = repo_rel(root, path)
+
+    # Yoga builds cleanly as separate C++ TUs, but in a flattened single
+    # TU its event.cpp private Node helper collides with facebook::yoga::Node.
+    # Keep the source snapshot pristine and apply the narrow rename only
+    # to generated output.
+    if rel == "external/yoga/yoga/event/event.cpp":
+        text = re.sub(r"\bNode\b", "EventSubscriberNode", text)
+    if rel == "external/yoga/yoga/YGNodeStyle.cpp":
+        text = text.replace("Style::", "facebook::yoga::Style::")
+
+    if rel.startswith("external/nanovg/src/"):
+        # NanoVG and Fontstash do not expose an upstream static-prefix macro
+        # for their C APIs. In the amalgamation those APIs are implementation
+        # details, so give their declarations/definitions internal linkage.
+        text = re.sub(
+            r"(?m)^(?!static\b)((?:(?:const|unsigned|signed|struct)\s+)*"
+            r"[A-Za-z_][A-Za-z0-9_]*\s*\*?\s+"
+            r"(?:nvg|nvgl|nvglu|fons|stbi)[A-Za-z0-9_]*\s*\()",
+            r"static \1",
+            text,
+        )
+
+    return text
+
+
+def clean_generated_line(line: str) -> str:
+    line = line.rstrip()
+    m = re.match(r"^[ \t]+", line)
+    if m:
+        prefix = re.sub(r" +(?=\t)", "", m.group(0))
+        line = prefix + line[len(m.group(0)):]
+    return line
+
+
+def update_block_comment_state(line: str, in_block_comment: bool) -> bool:
+    i = 0
+    n = len(line)
+    while i < n:
+        if in_block_comment:
+            end = line.find("*/", i)
+            if end == -1:
+                return True
+            in_block_comment = False
+            i = end + 2
+            continue
+
+        line_comment = line.find("//", i)
+        block_comment = line.find("/*", i)
+        if block_comment == -1 or (line_comment != -1 and line_comment < block_comment):
+            return False
+        in_block_comment = True
+        i = block_comment + 2
+    return in_block_comment
+
+
+def expand_external_file(root: Path, path: Path,
+                         emitted_headers: set[Path],
+                         active_stack: set[Path] | None = None) -> str:
+    path = path.resolve()
+    if active_stack is None:
+        active_stack = set()
+    rel_path = repo_rel(root, path)
+    repeatable_header = rel_path in REPEATABLE_EXTERNAL_HEADERS
+
+    if path.suffix == ".h" and not repeatable_header:
+        if path in emitted_headers:
+            return ""
+        emitted_headers.add(path)
+
+    active_stack.add(path)
+    out_lines: list[str] = [render_external_header(rel_path)]
+    in_block_comment = False
+    for line in read_external_text(root, path).splitlines():
+        can_process_directive = not in_block_comment
+        next_in_block_comment = update_block_comment_state(line, in_block_comment)
+
+        if can_process_directive and PRAGMA_ONCE_RE.match(line):
+            in_block_comment = next_in_block_comment
+            continue
+        m = ANY_INCLUDE_RE.match(line) if can_process_directive else None
+        if m:
+            target = resolve_external_include(root, path, m.group(1))
+            if target is not None:
+                target = target.resolve()
+                if target in active_stack:
+                    out_lines.append(clean_generated_line(line))
+                    in_block_comment = next_in_block_comment
+                    continue
+                out_lines.append(expand_external_file(root, target,
+                                                      emitted_headers,
+                                                      active_stack))
+                in_block_comment = next_in_block_comment
+                continue
+        out_lines.append(clean_generated_line(line))
+        in_block_comment = next_in_block_comment
+    active_stack.remove(path)
+
+    while out_lines and not out_lines[-1].strip():
+        out_lines.pop()
+
+    return "\n".join(out_lines) + "\n\n"
+
+
+def yoga_cpp_sources(root: Path) -> list[Path]:
+    yoga_root = root / "external" / "yoga" / "yoga"
+    sources = sorted(yoga_root.rglob("*.cpp"))
+    event_cpp = yoga_root / "event" / "event.cpp"
+    return [p for p in sources if p != event_cpp] + [event_cpp]
+
+
+def resolve_lexbor_include(staged_source: Path, name: str) -> Path | None:
+    if not name.startswith("lexbor/"):
+        return None
+
+    path = staged_source / name
+    return path if path.exists() else None
+
+
+def expand_lexbor_file(staged_source: Path, path: Path,
+                       emitted_headers: set[Path]) -> str:
+    rel_path = path.relative_to(staged_source).as_posix()
+    repeatable_header = rel_path in LEXBOR_REPEATABLE_HEADERS
+
+    if path.suffix == ".h" and not repeatable_header:
+        if path in emitted_headers:
+            return ""
+        emitted_headers.add(path)
+
+    out_lines: list[str] = [render_external_header(f"external/lexbor/{rel_path}")]
+
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if PRAGMA_ONCE_RE.match(line):
+            continue
+        m = ANY_INCLUDE_RE.match(line)
+        if m:
+            target = resolve_lexbor_include(staged_source, m.group(1))
+            if target is not None:
+                out_lines.append(expand_lexbor_file(staged_source, target,
+                                                    emitted_headers))
+                continue
+        out_lines.append(line.rstrip())
+
+    while out_lines and isinstance(out_lines[-1], str) and not out_lines[-1].strip():
+        out_lines.pop()
+
+    return "\n".join(out_lines) + "\n\n"
+
+
+def emit_lexbor_block(root: Path, cxx: str) -> str:
+    with tempfile.TemporaryDirectory(prefix="affineui-lexbor-") as tmp:
+        tmp_path = Path(tmp)
+        staged_source = copy_source_tree(source_root(root), Path(tmp) / "source")
+        transform_lexbor(staged_source, "aui_")
+
+        obj_dir = tmp_path / "obj"
+        obj_dir.mkdir(parents=True, exist_ok=True)
+        failures = repair_with_compiler(cxx, macos_sdk_flags(), staged_source,
+                                        obj_dir, default_platform(), "aui_", 8)
+        if failures:
+            first = failures[0]
+            rel = first.path.relative_to(staged_source)
+            raise RuntimeError(
+                f"Lexbor C++ staging failed while amalgamating: {rel}\n"
+                + "\n".join(first.stderr.splitlines()[:40])
+            )
+
+        offenders = unprefixed_global_symbols(obj_dir)
+        if offenders:
+            raise RuntimeError(
+                "Lexbor C++ staging left unprefixed globals:\n"
+                + "\n".join(offenders[:20])
+            )
+
+        emitted_headers: set[Path] = set()
+        parts: list[str] = [
+            "// ─── Lexbor HTML/CSS engine (generated C++ staging tree) ─────────────\n",
+            "#ifndef LEXBOR_STATIC\n",
+            "#  define LEXBOR_STATIC\n",
+            "#endif\n",
+            "#if !defined(AFFINEUI_HTML_ENTITIES_FULL)\n",
+            "#  define LXB_HTML_TOKENIZER_BASIC_ENTITIES\n",
+            "#endif\n",
+            "#if defined(__clang__)\n",
+            "#  pragma clang diagnostic push\n",
+            "#  pragma clang diagnostic ignored \"-Wc++11-narrowing\"\n",
+            "#  pragma clang diagnostic ignored \"-Wc99-designator\"\n",
+            "#  pragma clang diagnostic ignored \"-Wwritable-strings\"\n",
+            "#endif\n",
+            "\n",
+        ]
+
+        parts.append(expand_lexbor_file(staged_source,
+                                        staged_source / "lexbor" / "core" / "base.h",
+                                        emitted_headers))
+        for path in lexbor_c_sources(staged_source, default_platform()):
+            parts.append(expand_lexbor_file(staged_source, path, emitted_headers))
+
+        parts.extend([
+            "#if defined(__clang__)\n",
+            "#  pragma clang diagnostic pop\n",
+            "#endif\n",
+            "\n",
+        ])
+
+        return "".join(parts)
+
+
+def emit_yoga_block(root: Path) -> str:
+    emitted_headers: set[Path] = set()
+    parts: list[str] = [
+        "// ─── Yoga flexbox layout engine ───────────────────────────────────────\n",
+        "#if !defined(AFFINEUI_STUB_BUILD)\n",
+        "#if defined(__clang__)\n",
+        "#  pragma clang diagnostic push\n",
+        "#  pragma clang diagnostic ignored \"-Wc++98-compat-extra-semi\"\n",
+        "#endif\n",
+        "\n",
+    ]
+    for path in yoga_cpp_sources(root):
+        parts.append(expand_external_file(root, path, emitted_headers))
+    parts.extend([
+        "#if defined(__clang__)\n",
+        "#  pragma clang diagnostic pop\n",
+        "#endif\n",
+        "#endif  // !AFFINEUI_STUB_BUILD\n",
+        "\n",
+    ])
+    return "".join(parts)
+
+
+def emit_renderer_declaration_block(root: Path) -> str:
+    emitted_headers: set[Path] = set()
+    parts: list[str] = [
+        "// ─── Renderer/windowing vendored declarations ────────────────────────\n",
+        "#if !defined(AFFINEUI_STUB_BUILD)\n",
+        "#  if defined(__APPLE__)\n",
+        "#    define GL_SILENCE_DEPRECATION\n",
+        "#    include <OpenGL/gl3.h>\n",
+        "#  elif defined(_WIN32)\n",
+        "#    define WIN32_LEAN_AND_MEAN\n",
+        "#    define NOMINMAX\n",
+        "#    include <windows.h>\n",
+        "#    include <GL/gl.h>\n",
+        "#  else\n",
+        "#    define GL_GLEXT_PROTOTYPES\n",
+        "#    include <GL/gl.h>\n",
+        "#    include <GL/glext.h>\n",
+        "#  endif\n",
+        "\n",
+        "#  if !defined(AFFINEUI_HOST_PROVIDES_NANOVG)\n",
+        "#    define NANOVG_GL3 1\n",
+    ]
+    parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg.h",
+                                      emitted_headers))
+    parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg_gl.h",
+                                      emitted_headers))
+    parts.append('extern "C" {\n')
+    parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg_gl_utils.h",
+                                      emitted_headers))
+    parts.append('}  // extern "C"\n')
+    parts.extend([
+        "#  endif  // !AFFINEUI_HOST_PROVIDES_NANOVG\n",
+        "\n",
+        "#  if !defined(AFFINEUI_HOST_PROVIDES_SOKOL)\n",
+    ])
+    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_log.h",
+                                      emitted_headers))
+    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_app.h",
+                                      emitted_headers))
+    parts.extend([
+        "#  endif  // !AFFINEUI_HOST_PROVIDES_SOKOL\n",
+        "#endif  // !AFFINEUI_STUB_BUILD\n",
+        "\n",
+    ])
+    return "".join(parts)
+
+
+def render_external_source_block(root: Path, rel_path: str,
+                                 emitted_external_headers: set[Path]) -> str:
+    return render_block(process_file(root, rel_path,
+                                     expand_external=True,
+                                     emitted_external_headers=emitted_external_headers))
+
+
+def emit_vendored_c_block(root: Path, cwrap_blocks: list[FileBlock],
+                          vendored_external_headers: set[Path]) -> str:
+    parts: list[str] = [
+        "// ─── vendored-C wrappers (C linkage) ────────────────────────────────────\n\n",
+        "#if !defined(AFFINEUI_STUB_BUILD) && !defined(AFFINEUI_HOST_PROVIDES_NANOVG)\n",
+        'extern "C" {\n\n',
+        expand_external_file(root,
+                             root / "external" / "nanovg" / "src" / "nanovg.c",
+                             vendored_external_headers),
+        '}  // extern "C"\n',
+        "#endif  // !AFFINEUI_STUB_BUILD && !AFFINEUI_HOST_PROVIDES_NANOVG\n\n",
+        'extern "C" {\n\n',
+    ]
+    for b in cwrap_blocks:
+        parts.append(render_block(b))
+    parts.append('}  // extern "C"\n\n')
+    parts.append(
+        "// Implementation macros are single-use; clear them before any later\n"
+        "// declaration-only repeat of these upstream headers.\n"
+        "#undef NANOVG_GL3_IMPLEMENTATION\n"
+        "#undef NANOVG_GL_IMPLEMENTATION\n"
+        "#undef SOKOL_IMPL\n"
+        "#undef SOKOL_APP_IMPL\n"
+        "#undef SOKOL_LOG_IMPL\n"
+        "#undef FONTSTASH_IMPLEMENTATION\n"
+        "#undef STB_IMAGE_IMPLEMENTATION\n"
+        "#undef STB_TRUETYPE_IMPLEMENTATION\n"
+        "\n"
+    )
+    return "".join(parts)
 
 
 def emit_header(root: Path, out_path: Path, version: str) -> int:
@@ -309,15 +731,21 @@ def emit_header(root: Path, out_path: Path, version: str) -> int:
         parts.append(render_block(b))
     parts.append("#endif  // AFFINEUI_AMALGAMATED_H\n")
 
-    text = "".join(parts)
+    text = "".join(parts).rstrip() + "\n"
     out_path.write_text(text, encoding="utf-8")
     return len(text)
 
 
-def emit_impl(root: Path, out_path: Path, version: str) -> int:
+def emit_impl(root: Path, out_path: Path, version: str, cxx: str) -> int:
     header_blocks = [process_file(root, p) for p in INTERNAL_HEADERS]
     source_blocks = [process_file(root, p) for p in ENGINE_SOURCES]
-    cwrap_blocks  = [process_file(root, p) for p in VENDORED_C_TUS]
+    vendored_external_headers: set[Path] = set()
+    cwrap_external_headers: set[Path] = set()
+    cwrap_blocks  = [
+        process_file(root, p, expand_external=True,
+                     emitted_external_headers=cwrap_external_headers)
+        for p in VENDORED_C_TUS
+    ]
 
     sys_seen: set[str] = set()
     sys_order: list[str] = []
@@ -361,12 +789,19 @@ def emit_impl(root: Path, out_path: Path, version: str) -> int:
         "#endif\n"
         "#ifndef AFFINEUI_HOST_PROVIDES_STB_TRUETYPE\n"
         "#  define STB_TRUETYPE_STATIC\n"
+        "#  define STBTT_STATIC\n"
         "#endif\n"
         "#ifndef AFFINEUI_HOST_PROVIDES_FONTSTASH\n"
         "#  define FONS_STATIC\n"
         "#endif\n"
         "\n"
     )
+
+    parts.append(emit_lexbor_block(root, cxx))
+    parts.append(emit_vendored_c_block(root, cwrap_blocks,
+                                       vendored_external_headers))
+    parts.append(emit_yoga_block(root))
+    parts.append(emit_renderer_declaration_block(root))
 
     parts.append("// ─── internal headers ───────────────────────────────────────────────────\n\n")
     for b in header_blocks:
@@ -376,13 +811,7 @@ def emit_impl(root: Path, out_path: Path, version: str) -> int:
     for b in source_blocks:
         parts.append(render_block(b))
 
-    parts.append("// ─── vendored-C wrappers (C linkage) ────────────────────────────────────\n\n")
-    parts.append('extern "C" {\n\n')
-    for b in cwrap_blocks:
-        parts.append(render_block(b))
-    parts.append('}  // extern "C"\n')
-
-    text = "".join(parts)
+    text = "".join(parts).rstrip() + "\n"
     out_path.write_text(text, encoding="utf-8")
     return len(text)
 
@@ -400,11 +829,13 @@ def emit_manifest(root: Path) -> None:
     report("Internal headers (affineui.cpp head)", INTERNAL_HEADERS)
     report("Engine sources (affineui.cpp body)",   ENGINE_SOURCES)
     report("Vendored-C wrappers (affineui.cpp tail)", VENDORED_C_TUS)
+    report("External snapshots (inlined)", REQUIRED_EXTERNAL_FILES)
 
 
 def verify_inputs(root: Path) -> list[str]:
     missing: list[str] = []
-    for group in (PUBLIC_HEADERS, INTERNAL_HEADERS, ENGINE_SOURCES, VENDORED_C_TUS):
+    for group in (PUBLIC_HEADERS, INTERNAL_HEADERS, ENGINE_SOURCES,
+                  VENDORED_C_TUS, REQUIRED_EXTERNAL_FILES):
         for p in group:
             if not (root / p).exists():
                 missing.append(p)
@@ -415,6 +846,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--root", required=True, help="repo root")
     ap.add_argument("--out",  required=True, help="output directory")
+    ap.add_argument("--cxx", default="clang++",
+                    help="C++ compiler used to repair generated Lexbor staging")
     ap.add_argument("--manifest-only", action="store_true",
                     help="print the input manifest and exit (no files written)")
     args = ap.parse_args()
@@ -439,7 +872,7 @@ def main() -> int:
     h_path   = out / "affineui.h"
     cpp_path = out / "affineui.cpp"
     h_size   = emit_header(root, h_path,   version)
-    cpp_size = emit_impl  (root, cpp_path, version)
+    cpp_size = emit_impl  (root, cpp_path, version, args.cxx)
 
     print(f"wrote {h_path}   ({h_size:>9,} bytes)")
     print(f"wrote {cpp_path} ({cpp_size:>9,} bytes)")

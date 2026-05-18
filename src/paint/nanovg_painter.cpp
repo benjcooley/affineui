@@ -7,6 +7,7 @@
 #include "affineui/painter.h"
 #include "internal/paint_internal.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -228,7 +229,10 @@ public:
                           float line_height_mult) override {
         if (handle == 0 || text.empty()) return {};
         apply_handle(handle);
-        nvgTextLineHeight(vg_, line_height_mult);
+        const float natural_line_h = natural_line_height_px(handle);
+        const float css_line_h =
+            css_line_height_px(handle, line_height_mult, natural_line_h);
+        nvgTextLineHeight(vg_, nvg_line_height_mult(css_line_h, natural_line_h));
         // nvgTextBoxBounds returns [xmin, ymin, xmax, ymax] for the
         // rendered text wrapped at `breakRowWidth`. The bounds are in
         // the same local coords as the (x,y) we passed (we pass 0,0).
@@ -242,9 +246,25 @@ public:
         float bounds[4] = {0, 0, 0, 0};
         nvgTextBoxBounds(vg_, 0.0f, 0.0f, max_width,
                          text.data(), text.data() + text.size(), bounds);
+        const bool whitespace_only = text_is_whitespace_only(text);
+        int width = static_cast<int>(std::ceil(bounds[2] - bounds[0]));
+        if (width == 0 && whitespace_only) {
+            float line_bounds[4] = {0, 0, 0, 0};
+            const float advance = nvgTextBounds(
+                vg_, 0.0f, 0.0f, text.data(), text.data() + text.size(),
+                line_bounds);
+            width = static_cast<int>(std::ceil(advance));
+        }
+        float measured_h = bounds[3] - bounds[1];
+        if (measured_h <= 0.0f && whitespace_only) measured_h = natural_line_h;
+        const float leading = line_box_leading(css_line_h, natural_line_h);
+        int height = static_cast<int>(std::ceil(measured_h + leading));
+        if (height < static_cast<int>(std::ceil(css_line_h))) {
+            height = static_cast<int>(std::ceil(css_line_h));
+        }
         return Size{
-            static_cast<int>(std::ceil(bounds[2] - bounds[0])),
-            static_cast<int>(std::ceil(bounds[3] - bounds[1])),
+            width,
+            height,
         };
     }
 
@@ -256,10 +276,14 @@ public:
                        float         line_height_mult) override {
         if (handle == 0 || text.empty()) return;
         apply_handle(handle);
-        nvgTextLineHeight(vg_, line_height_mult);
+        const float natural_line_h = natural_line_height_px(handle);
+        const float css_line_h =
+            css_line_height_px(handle, line_height_mult, natural_line_h);
+        nvgTextLineHeight(vg_, nvg_line_height_mult(css_line_h, natural_line_h));
         nvgFillColor(vg_, to_nvg(color));
         const float fx = static_cast<float>(pos.x);
-        const float fy = static_cast<float>(pos.y);
+        const float fy = static_cast<float>(pos.y)
+                       + line_box_leading(css_line_h, natural_line_h) * 0.5f;
         nvgTextBox(vg_, fx, fy, max_width,
                    text.data(), text.data() + text.size());
         if (handle_is_synth_bold(handle)) {
@@ -326,9 +350,40 @@ private:
     static constexpr bool handle_is_synth_bold(std::uint32_t handle) {
         return (handle & 0x8000u) != 0u;
     }
+    static constexpr int handle_size_px(std::uint32_t handle) {
+        return static_cast<int>(handle & 0x7FFFu);
+    }
+    static bool text_is_whitespace_only(std::string_view text) {
+        for (char c : text) {
+            if (c != ' ' && c != '\t' && c != '\n' && c != '\r' &&
+                c != '\f' && c != '\v') {
+                return false;
+            }
+        }
+        return true;
+    }
+    float natural_line_height_px(std::uint32_t handle) {
+        float line_h = 0.0f;
+        nvgTextMetrics(vg_, nullptr, nullptr, &line_h);
+        if (line_h > 0.0f) return line_h;
+        return static_cast<float>(std::max(handle_size_px(handle), 1));
+    }
+    static float css_line_height_px(std::uint32_t handle,
+                                    float line_height_mult,
+                                    float natural_line_h) {
+        const float requested =
+            static_cast<float>(handle_size_px(handle)) * line_height_mult;
+        return std::max({requested, natural_line_h, 1.0f});
+    }
+    static float nvg_line_height_mult(float css_line_h, float natural_line_h) {
+        return natural_line_h > 0.0f ? css_line_h / natural_line_h : 1.0f;
+    }
+    static float line_box_leading(float css_line_h, float natural_line_h) {
+        return std::max(0.0f, css_line_h - natural_line_h);
+    }
     void apply_handle(std::uint32_t handle) {
         const int face = static_cast<int>((handle >> 16) & 0xFFFF);
-        const int size = static_cast<int>(handle & 0x7FFF);
+        const int size = handle_size_px(handle);
         nvgFontFaceId(vg_, face);
         nvgFontSize(vg_, static_cast<float>(size));
         // Layout treats Y as the top edge of the text box. NanoVG's
@@ -380,13 +435,14 @@ std::string_view register_default_font(NVGcontext* vg) {
 
     static constexpr FontCandidate kCandidates[] = {
 #if defined(__APPLE__)
-        // SFNS is the modern macOS UI font — what `-apple-system`
-        // resolves to in a browser. Stroke weight and metrics
-        // visibly differ from Helvetica, so prefer it when present.
-        {"/System/Library/Fonts/SFNS.ttf",                       0},
-        {"/System/Library/Fonts/SFCompact.ttf",                  0},
+        // NanoVG/fontstash does not drive Apple's variable system-font
+        // weight axes, so pairing SFNS Regular with Helvetica bold
+        // produces mismatched metrics. Prefer complete TTC families
+        // whose regular/bold/italic faces all come from the same file.
         {"/System/Library/Fonts/HelveticaNeue.ttc",              0},
         {"/System/Library/Fonts/Helvetica.ttc",                  0},
+        {"/System/Library/Fonts/SFNS.ttf",                       0},
+        {"/System/Library/Fonts/SFCompact.ttf",                  0},
         {"/System/Library/Fonts/Supplemental/Arial.ttf",         0},
         {"/Library/Fonts/Arial.ttf",                             0},
 #elif defined(__linux__)

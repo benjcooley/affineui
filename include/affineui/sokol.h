@@ -38,6 +38,8 @@
 
 #include <sokol_app.h>
 
+#include <string>
+
 namespace affineui::sokol {
 
 // ── Cursor mapping ──────────────────────────────────────────────────
@@ -78,6 +80,26 @@ inline Key key_to_affine(int sapp_keycode) {
     }
 }
 
+inline std::string utf8_from_codepoint(std::uint32_t cp) {
+    std::string out;
+    if (cp <= 0x7Fu) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp <= 0x7FFu) {
+        out.push_back(static_cast<char>(0xC0u | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    } else if (cp <= 0xFFFFu) {
+        out.push_back(static_cast<char>(0xE0u | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    } else if (cp <= 0x10FFFFu) {
+        out.push_back(static_cast<char>(0xF0u | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (cp & 0x3Fu)));
+    }
+    return out;
+}
+
 /// Translate a sokol_app event to affineui::Event. Mouse coords are
 /// converted from framebuffer pixels (sokol's units) to CSS points
 /// (Ui's units) using `sapp_dpi_scale()`.
@@ -102,6 +124,10 @@ inline Event translate(const sapp_event* ev) {
             out.type     = EventType::KeyUp;
             out.key_code = static_cast<int>(ev->key_code);
             out.key      = key_to_affine(ev->key_code);
+            return out;
+        case SAPP_EVENTTYPE_CHAR:
+            out.type = EventType::TextInput;
+            out.text = utf8_from_codepoint(ev->char_code);
             return out;
         default:
             return out;  // type stays None → caller skips

@@ -17,6 +17,7 @@
 #    include <cstring>
 #    include <memory>
 #    include <string>
+#    include <vector>
 
 namespace {
 
@@ -175,6 +176,101 @@ TEST_CASE("border side color longhands reach the resolved border color") {
     CHECK(rs.animated.border_rgba == rgba(0x44, 0x55, 0x66));
 }
 
+TEST_CASE("rgba colors resolve to packed alpha") {
+    CssEnv env("<button>hi</button>");
+    env.attach("button { color: rgba(255, 255, 255, .5);"
+               "border-color: rgba(0, 0, 0, .125); }");
+    env.build_resolver();
+
+    auto* button = env.find("button");
+    REQUIRE(button != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto rs = env.resolver->resolve(button, parent);
+    CHECK(rs.animated.color_rgba == rgba(255, 255, 255, 128));
+    CHECK(rs.animated.border_rgba == rgba(0, 0, 0, 32));
+}
+
+TEST_CASE("box-shadow reaches the resolved animated style") {
+    CssEnv env("<button>hi</button>");
+    env.attach("button { box-shadow: 0 0 0 .25rem rgba(13, 110, 253, .25); }");
+    env.build_resolver();
+
+    auto* button = env.find("button");
+    REQUIRE(button != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto rs = env.resolver->resolve(button, parent);
+    CHECK(rs.animated.shadow_rgba == rgba(13, 110, 253, 64));
+    CHECK(rs.animated.shadow_offset_x == 0);
+    CHECK(rs.animated.shadow_offset_y == 0);
+    CHECK(rs.animated.shadow_blur == 0);
+    CHECK(rs.animated.shadow_spread == 4);
+}
+
+TEST_CASE("framework shorthands reach resolved style") {
+    CssEnv env("<section><button class=\"btn\">hi</button></section>");
+    env.attach("section { background: #fff url(example.png) right center / 8px 10px no-repeat; gap: 1.25rem 2rem; }"
+               ".btn { border-radius: .25rem; }");
+    env.build_resolver();
+
+    auto* section = env.find("section");
+    auto* button = env.find("button");
+    REQUIRE(section != nullptr);
+    REQUIRE(button != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto section_rs = env.resolver->resolve(section, parent);
+    const auto button_rs = env.resolver->resolve(button, section_rs);
+
+    CHECK(section_rs.animated.background_rgba == rgba(0xFF, 0xFF, 0xFF));
+    CHECK(section_rs.computed.row_gap == 20);
+    CHECK(section_rs.computed.column_gap == 32);
+    CHECK(button_rs.computed.border_radius_top_left_px == 4);
+    CHECK(button_rs.computed.border_radius_top_right_px == 4);
+    CHECK(button_rs.computed.border_radius_bot_right_px == 4);
+    CHECK(button_rs.computed.border_radius_bot_left_px == 4);
+}
+
+TEST_CASE("border-radius longhands reach computed style") {
+    CssEnv env("<button>hi</button>");
+    env.attach("button { border-top-left-radius: 8px 12px;"
+               "border-bottom-right-radius: 6px; }");
+    env.build_resolver();
+
+    auto* button = env.find("button");
+    REQUIRE(button != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto rs = env.resolver->resolve(button, parent);
+    CHECK(rs.computed.border_radius_top_left_px == 8);
+    CHECK(rs.computed.border_radius_bot_right_px == 6);
+}
+
+TEST_CASE("flex sizing properties reach computed style") {
+    CssEnv env("<main><section>col</section><article>body</article></main>");
+    env.attach("section { flex-basis: 0; flex-grow: 1; max-width: 42px; min-width: 0; }"
+               "article { flex: 1 0 0%; }");
+    env.build_resolver();
+
+    auto* section = env.find("section");
+    auto* article = env.find("article");
+    REQUIRE(section != nullptr);
+    REQUIRE(article != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto section_rs = env.resolver->resolve(section, parent);
+    const auto article_rs = env.resolver->resolve(article, parent);
+
+    CHECK(section_rs.computed.flex_basis == 0);
+    CHECK(section_rs.computed.flex_grow == 1);
+    CHECK(section_rs.computed.max_width == 42);
+    CHECK(section_rs.computed.min_width == 0);
+    CHECK(article_rs.computed.flex_grow == 1);
+    CHECK(article_rs.computed.flex_shrink == 0);
+    CHECK(article_rs.computed.flex_basis == 0);
+}
+
 TEST_CASE("font-size in px lands in ComputedStyle, not AnimatedStyle") {
     CssEnv env("<h1>hi</h1>");
     env.attach("h1 { font-size: 42px; }");
@@ -186,6 +282,22 @@ TEST_CASE("font-size in px lands in ComputedStyle, not AnimatedStyle") {
     const affineui::detail::ResolvedStyle parent{};
     const auto rs = env.resolver->resolve(h1, parent);
     CHECK(rs.computed.font_size_px == 42);
+}
+
+TEST_CASE("rem lengths resolve against the default root font size") {
+    CssEnv env("<button>hi</button>");
+    env.attach("button { padding: .5rem 1rem; }");
+    env.build_resolver();
+
+    auto* button = env.find("button");
+    REQUIRE(button != nullptr);
+
+    const affineui::detail::ResolvedStyle parent{};
+    const auto rs = env.resolver->resolve(button, parent);
+    CHECK(rs.computed.padding_top == 8);
+    CHECK(rs.computed.padding_right == 16);
+    CHECK(rs.computed.padding_bottom == 8);
+    CHECK(rs.computed.padding_left == 16);
 }
 
 TEST_CASE(":active overlay layered via apply_decl_list updates the color") {

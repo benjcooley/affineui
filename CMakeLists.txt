@@ -28,6 +28,7 @@ option(AFFINEUI_BUILD_SHARED    "Build as shared library"      OFF)
 option(AFFINEUI_ENABLE_IMM      "Enable immediate-mode layer"  ON)
 option(AFFINEUI_ENABLE_C_API    "Build the extern \"C\" surface" ON)
 option(AFFINEUI_WARNINGS_AS_ERRORS "Treat warnings as errors"  OFF)
+option(AFFINEUI_HTML_ENTITIES_FULL "Use Lexbor's full HTML5 named entity table" OFF)
 set(AFFINEUI_BACKEND "auto" CACHE STRING "GPU backend: auto|metal|d3d11|gl|wgpu")
 
 # ── "Bring your own" options for hosts that already vendor these deps ────────

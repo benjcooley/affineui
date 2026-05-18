@@ -13,7 +13,7 @@
 //
 // What this file deliberately does NOT do (yet):
 //   - Cache ResolvedStyle per element. Phase 2E adds that.
-//   - Handle named colors, rgb()/hsl(), em/rem/% lengths. Phase 3.
+//   - Handle hsl(), and % lengths. Phase 3.
 //   - Touch font_family or font_id. Font registry lands alongside.
 //
 // Adding a property = one switch arm and one small parser helper.
@@ -21,6 +21,7 @@
 #include "internal/style_resolver.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #if !defined(AFFINEUI_STUB_BUILD)
@@ -61,21 +62,93 @@ inline std::uint32_t make_rgba(std::uint8_t r, std::uint8_t g,
          |  std::uint32_t(a);
 }
 
-// Hex colors only for Phase 2A. Named/rgb()/hsl() are one switch arm
-// each and land alongside their tests.
-bool parse_hex_color(const lxb_css_value_color_t* v, std::uint32_t& out) {
-    if (!v || v->type != LXB_CSS_COLOR_HEX) return false;
-    const auto& h = v->u.hex.rgba;
-    const bool has_alpha =
-        (v->u.hex.type == LXB_CSS_PROPERTY_COLOR_HEX_TYPE_4) ||
-        (v->u.hex.type == LXB_CSS_PROPERTY_COLOR_HEX_TYPE_8);
-    out = make_rgba(h.r, h.g, h.b, has_alpha ? h.a : 0xFF);
-    return true;
+std::uint8_t clamp_u8(double v) {
+    if (v <= 0.0) return 0;
+    if (v >= 255.0) return 255;
+    return static_cast<std::uint8_t>(std::lround(v));
+}
+
+std::uint8_t color_component(const lxb_css_value_number_percentage_t& c) {
+    if (c.type == LXB_CSS_VALUE__PERCENTAGE)
+        return clamp_u8(c.u.percentage.num * 255.0 / 100.0);
+    if (c.type == LXB_CSS_VALUE__NUMBER)
+        return clamp_u8(c.u.number.num);
+    return 0;
+}
+
+std::uint8_t alpha_component(const lxb_css_value_number_percentage_t& a) {
+    if (a.type == LXB_CSS_VALUE__PERCENTAGE)
+        return clamp_u8(a.u.percentage.num * 255.0 / 100.0);
+    if (a.type == LXB_CSS_VALUE__NUMBER)
+        return clamp_u8(a.u.number.num * 255.0);
+    return 0xFF;
+}
+
+// Common CSS color values used by framework stylesheets. Bootstrap
+// relies heavily on hex + rgba; named-color coverage can grow as real
+// inputs require it.
+bool parse_color(const lxb_css_value_color_t* v, std::uint32_t& out) {
+    if (!v) return false;
+    if (v->type == LXB_CSS_COLOR_HEX) {
+        const auto& h = v->u.hex.rgba;
+        if (v->u.hex.type == LXB_CSS_PROPERTY_COLOR_HEX_TYPE_3 ||
+            v->u.hex.type == LXB_CSS_PROPERTY_COLOR_HEX_TYPE_4) {
+            const auto expand = [](std::uint8_t c) {
+                return static_cast<std::uint8_t>((c << 4) | c);
+            };
+            out = make_rgba(expand(h.r), expand(h.g), expand(h.b),
+                            v->u.hex.type == LXB_CSS_PROPERTY_COLOR_HEX_TYPE_4
+                                ? expand(h.a)
+                                : 0xFF);
+            return true;
+        }
+        out = make_rgba(h.r, h.g, h.b,
+                        v->u.hex.type == LXB_CSS_PROPERTY_COLOR_HEX_TYPE_8
+                            ? h.a
+                            : 0xFF);
+        return true;
+    }
+    if (v->type == LXB_CSS_COLOR_RGB || v->type == LXB_CSS_COLOR_RGBA) {
+        out = make_rgba(color_component(v->u.rgb.r),
+                        color_component(v->u.rgb.g),
+                        color_component(v->u.rgb.b),
+                        alpha_component(v->u.rgb.a));
+        return true;
+    }
+    switch (v->type) {
+        case LXB_CSS_COLOR_TRANSPARENT:
+            out = 0x00000000u;
+            return true;
+        case LXB_CSS_COLOR_BLACK:
+            out = make_rgba(0x00, 0x00, 0x00, 0xFF);
+            return true;
+        case LXB_CSS_COLOR_WHITE:
+            out = make_rgba(0xFF, 0xFF, 0xFF, 0xFF);
+            return true;
+        default:
+            break;
+    }
+    return false;
+}
+
+bool parse_length_value(double num, int unit, int& out) {
+    switch (unit) {
+        case LXB_CSS_UNIT__UNDEF:
+        case LXB_CSS_UNIT_PX:
+            out = static_cast<int>(num + 0.5);
+            return true;
+        case LXB_CSS_UNIT_REM:
+        case LXB_CSS_UNIT_EM:
+            out = static_cast<int>((num * 16.0) + 0.5);
+            return true;
+        default:
+            return false;
+    }
 }
 
 // Resolve a `<length>` value to integer CSS pixels. Phase 2A handles
-// LENGTH-typed values in `px`; em/rem/% follow when the font cascade
-// and percent-resolution context are wired in (Phase 2A.1).
+// LENGTH-typed values in `px`, `rem`, and `em`; % follows when the
+// percent-resolution context is wired in.
 //
 // CSS lets you write a unit-less `0` for any length value
 // (`padding: 6px 0` is valid; the `0` parses as a NUMBER, not a
@@ -88,11 +161,12 @@ bool parse_length_px(const lxb_css_value_length_percentage_type_t* v, int& out) 
     if (!v) return false;
     if (v->length.type == LXB_CSS_VALUE__LENGTH) {
         const auto& L = v->length.u.length;
-        if (static_cast<int>(L.unit) == static_cast<int>(LXB_CSS_UNIT_PX)) {
-            out = static_cast<int>(L.num + 0.5);
-            return true;
-        }
-        return false;
+        return parse_length_value(L.num, static_cast<int>(L.unit), out);
+    }
+    if (v->length.type == LXB_CSS_VALUE__PERCENTAGE &&
+        v->length.u.percentage.num == 0.0) {
+        out = 0;
+        return true;
     }
     if (v->length.type == LXB_CSS_VALUE__NUMBER) {
         out = 0;  // unit-less zero is the only valid NUMBER here
@@ -104,9 +178,8 @@ bool parse_length_px(const lxb_css_value_length_percentage_type_t* v, int& out) 
 bool parse_length_px(const lxb_css_value_length_type_t* v, int& out) {
     if (!v) return false;
     if (v->type == LXB_CSS_VALUE__LENGTH) {
-        if (static_cast<int>(v->length.unit) != static_cast<int>(LXB_CSS_UNIT_PX)) return false;
-        out = static_cast<int>(v->length.num + 0.5);
-        return true;
+        return parse_length_value(v->length.num,
+                                  static_cast<int>(v->length.unit), out);
     }
     if (v->type == LXB_CSS_VALUE__NUMBER) {
         // The lxb_css_value_length_type_t union doesn't expose the
@@ -119,11 +192,23 @@ bool parse_length_px(const lxb_css_value_length_type_t* v, int& out) {
     return false;
 }
 
+void clear_box_shadow(AnimatedStyle& s) {
+    s.shadow_rgba = 0x00000000u;
+    s.shadow_offset_x = 0;
+    s.shadow_offset_y = 0;
+    s.shadow_blur = 0;
+    s.shadow_spread = 0;
+}
+
 bool parse_length_px(const lxb_css_value_length_percentage_t* v, int& out) {
     if (!v) return false;
     if (v->type == LXB_CSS_VALUE__LENGTH) {
-        if (static_cast<int>(v->u.length.unit) != static_cast<int>(LXB_CSS_UNIT_PX)) return false;
-        out = static_cast<int>(v->u.length.num + 0.5);
+        return parse_length_value(v->u.length.num,
+                                  static_cast<int>(v->u.length.unit), out);
+    }
+    if (v->type == LXB_CSS_VALUE__PERCENTAGE &&
+        v->u.percentage.num == 0.0) {
+        out = 0;
         return true;
     }
     if (v->type == LXB_CSS_VALUE__NUMBER) {
@@ -136,6 +221,45 @@ bool parse_length_px(const lxb_css_value_length_percentage_t* v, int& out) {
     return false;
 }
 
+bool parse_radius_px(const lxb_css_property_border_radius_corner_t& corner,
+                     int& out) {
+    // AffineUI currently stores one scalar radius per corner. CSS
+    // allows elliptical radii (`h / v`); use the horizontal radius
+    // until the renderer grows paired radii.
+    return parse_length_px(&corner.h, out);
+}
+
+void apply_flex_basis_value(const lxb_css_property_flex_basis_t& basis,
+                            ResolvedStyle& s) {
+    int px = 0;
+    if (basis.type == LXB_CSS_VALUE_AUTO ||
+        basis.type == LXB_CSS_VALUE_MIN_CONTENT ||
+        basis.type == LXB_CSS_VALUE_MAX_CONTENT ||
+        basis.type == LXB_CSS_FLEX_BASIS_CONTENT) {
+        s.computed.flex_basis = -1;
+        return;
+    }
+    if (parse_length_px(&basis, px) && px >= 0) {
+        s.computed.flex_basis = static_cast<std::int16_t>(px);
+    }
+}
+
+void apply_width_value(const lxb_css_property_width_t& width,
+                       std::int16_t& out,
+                       std::int16_t auto_value) {
+    int px = 0;
+    if (width.type == LXB_CSS_VALUE_AUTO ||
+        width.type == LXB_CSS_VALUE_NONE ||
+        width.type == LXB_CSS_VALUE_MIN_CONTENT ||
+        width.type == LXB_CSS_VALUE_MAX_CONTENT) {
+        out = auto_value;
+        return;
+    }
+    if (parse_length_px(&width, px) && px >= 0) {
+        out = static_cast<std::int16_t>(px);
+    }
+}
+
 // Route one declaration into the right struct.
 void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
     switch (d->type) {
@@ -143,14 +267,74 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
         case LXB_CSS_PROPERTY_COLOR: {
             const auto* v = static_cast<const lxb_css_property_color_t*>(d->u.user);
             std::uint32_t rgba;
-            if (parse_hex_color(v, rgba)) s.animated.color_rgba = rgba;
+            if (parse_color(v, rgba)) s.animated.color_rgba = rgba;
             break;
         }
         case LXB_CSS_PROPERTY_BACKGROUND_COLOR: {
             const auto* v =
                 static_cast<const lxb_css_property_background_color_t*>(d->u.user);
             std::uint32_t rgba;
-            if (parse_hex_color(v, rgba)) s.animated.background_rgba = rgba;
+            if (parse_color(v, rgba)) s.animated.background_rgba = rgba;
+            break;
+        }
+        case LXB_CSS_PROPERTY_BACKGROUND: {
+            const auto* v =
+                static_cast<const lxb_css_property_background_t*>(d->u.user);
+            std::uint32_t rgba;
+            if (parse_color(&v->color, rgba)) s.animated.background_rgba = rgba;
+            break;
+        }
+        case LXB_CSS_PROPERTY_BOX_SHADOW: {
+            const auto* v =
+                static_cast<const lxb_css_property_box_shadow_t*>(d->u.user);
+            switch (v->type) {
+                case LXB_CSS_VALUE_INITIAL:
+                case LXB_CSS_VALUE_UNSET:
+                case LXB_CSS_VALUE_REVERT:
+                case LXB_CSS_BOX_SHADOW_NONE:
+                    clear_box_shadow(s.animated);
+                    break;
+                case LXB_CSS_BOX_SHADOW__LENGTH: {
+                    if (v->inset) {
+                        // Inset shadows need a separate inner-shadow
+                        // paint path. Avoid painting them as outer
+                        // shadows until that renderer exists.
+                        clear_box_shadow(s.animated);
+                        break;
+                    }
+
+                    int ox = 0;
+                    int oy = 0;
+                    int blur = 0;
+                    int spread = 0;
+                    if (!parse_length_px(&v->offset_x, ox) ||
+                        !parse_length_px(&v->offset_y, oy)) {
+                        break;
+                    }
+                    if (v->blur_radius.type != LXB_CSS_VALUE__UNDEF) {
+                        parse_length_px(&v->blur_radius, blur);
+                    }
+                    if (v->spread_radius.type != LXB_CSS_VALUE__UNDEF) {
+                        parse_length_px(&v->spread_radius, spread);
+                    }
+
+                    std::uint32_t rgba = s.animated.color_rgba;
+                    parse_color(&v->color, rgba);
+                    s.animated.shadow_rgba =
+                        static_cast<std::uint32_t>(rgba);
+                    s.animated.shadow_offset_x =
+                        static_cast<std::int16_t>(ox);
+                    s.animated.shadow_offset_y =
+                        static_cast<std::int16_t>(oy);
+                    s.animated.shadow_blur =
+                        static_cast<std::int16_t>(blur);
+                    s.animated.shadow_spread =
+                        static_cast<std::int16_t>(spread);
+                    break;
+                }
+                default:
+                    break;
+            }
             break;
         }
         // ── Borders ────────────────────────────────────────────────
@@ -160,10 +344,6 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
         // Phase 2C — per-side variation lands when we split
         // AnimatedStyle / ComputedStyle to hold per-side colors and
         // styles.
-        //
-        // Gap: lexbor 2.4 does NOT expose `border-radius`. When that
-        // changes (or we add our own parser hook), the radius cascade
-        // entry lives here.
         case LXB_CSS_PROPERTY_BORDER:
         case LXB_CSS_PROPERTY_BORDER_TOP:
         case LXB_CSS_PROPERTY_BORDER_RIGHT:
@@ -197,9 +377,83 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
                 default:                    style = BS::None;   break;
             }
             s.computed.border_style = style;
-            // Color — hex only, matching the rest of Phase 2A.
+            // Color — Bootstrap relies on rgba() here for card borders.
             std::uint32_t rgba;
-            if (parse_hex_color(&v->color, rgba)) s.animated.border_rgba = rgba;
+            if (parse_color(&v->color, rgba)) s.animated.border_rgba = rgba;
+            break;
+        }
+        case LXB_CSS_PROPERTY_BORDER_COLOR: {
+            const auto* v =
+                static_cast<const lxb_css_property_border_color_t*>(d->u.user);
+            std::uint32_t rgba;
+            if (parse_color(&v->top, rgba)) s.animated.border_rgba = rgba;
+            break;
+        }
+        case LXB_CSS_PROPERTY_BORDER_RADIUS: {
+            const auto* v =
+                static_cast<const lxb_css_property_border_radius_t*>(d->u.user);
+            int tl = 0;
+            int tr = 0;
+            int br = 0;
+            int bl = 0;
+            if (parse_radius_px(v->top_left, tl)) {
+                s.computed.border_radius_top_left_px =
+                    static_cast<std::int16_t>(tl);
+            }
+            if (parse_radius_px(v->top_right, tr)) {
+                s.computed.border_radius_top_right_px =
+                    static_cast<std::int16_t>(tr);
+            }
+            if (parse_radius_px(v->bottom_right, br)) {
+                s.computed.border_radius_bot_right_px =
+                    static_cast<std::int16_t>(br);
+            }
+            if (parse_radius_px(v->bottom_left, bl)) {
+                s.computed.border_radius_bot_left_px =
+                    static_cast<std::int16_t>(bl);
+            }
+            break;
+        }
+        case LXB_CSS_PROPERTY_BORDER_TOP_LEFT_RADIUS: {
+            const auto* v = static_cast<
+                const lxb_css_property_border_top_left_radius_t*>(d->u.user);
+            int px = 0;
+            if (parse_radius_px(*v, px)) {
+                s.computed.border_radius_top_left_px =
+                    static_cast<std::int16_t>(px);
+            }
+            break;
+        }
+        case LXB_CSS_PROPERTY_BORDER_TOP_RIGHT_RADIUS: {
+            const auto* v = static_cast<
+                const lxb_css_property_border_top_right_radius_t*>(d->u.user);
+            int px = 0;
+            if (parse_radius_px(*v, px)) {
+                s.computed.border_radius_top_right_px =
+                    static_cast<std::int16_t>(px);
+            }
+            break;
+        }
+        case LXB_CSS_PROPERTY_BORDER_BOTTOM_RIGHT_RADIUS: {
+            const auto* v = static_cast<
+                const lxb_css_property_border_bottom_right_radius_t*>(
+                    d->u.user);
+            int px = 0;
+            if (parse_radius_px(*v, px)) {
+                s.computed.border_radius_bot_right_px =
+                    static_cast<std::int16_t>(px);
+            }
+            break;
+        }
+        case LXB_CSS_PROPERTY_BORDER_BOTTOM_LEFT_RADIUS: {
+            const auto* v = static_cast<
+                const lxb_css_property_border_bottom_left_radius_t*>(
+                    d->u.user);
+            int px = 0;
+            if (parse_radius_px(*v, px)) {
+                s.computed.border_radius_bot_left_px =
+                    static_cast<std::int16_t>(px);
+            }
             break;
         }
         case LXB_CSS_PROPERTY_BORDER_TOP_COLOR:
@@ -209,7 +463,38 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
             const auto* v =
                 static_cast<const lxb_css_value_color_t*>(d->u.user);
             std::uint32_t rgba;
-            if (parse_hex_color(v, rgba)) s.animated.border_rgba = rgba;
+            if (parse_color(v, rgba)) s.animated.border_rgba = rgba;
+            break;
+        }
+        case LXB_CSS_PROPERTY_GAP: {
+            const auto* v =
+                static_cast<const lxb_css_property_gap_t*>(d->u.user);
+            int row = 0;
+            int column = 0;
+            if (parse_length_px(&v->row, row)) {
+                s.computed.row_gap = static_cast<std::int16_t>(row);
+            }
+            if (parse_length_px(&v->column, column)) {
+                s.computed.column_gap = static_cast<std::int16_t>(column);
+            }
+            break;
+        }
+        case LXB_CSS_PROPERTY_ROW_GAP: {
+            const auto* v =
+                static_cast<const lxb_css_property_row_gap_t*>(d->u.user);
+            int px = 0;
+            if (parse_length_px(v, px)) {
+                s.computed.row_gap = static_cast<std::int16_t>(px);
+            }
+            break;
+        }
+        case LXB_CSS_PROPERTY_COLUMN_GAP: {
+            const auto* v =
+                static_cast<const lxb_css_property_column_gap_t*>(d->u.user);
+            int px = 0;
+            if (parse_length_px(v, px)) {
+                s.computed.column_gap = static_cast<std::int16_t>(px);
+            }
             break;
         }
         // ── Box model: padding / margin ────────────────────────────
@@ -407,6 +692,36 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
             s.computed.flex_shrink = static_cast<std::uint8_t>(std::clamp(n, 0, 255));
             break;
         }
+        case LXB_CSS_PROPERTY_FLEX_BASIS: {
+            const auto* v =
+                static_cast<const lxb_css_property_flex_basis_t*>(d->u.user);
+            apply_flex_basis_value(*v, s);
+            break;
+        }
+        case LXB_CSS_PROPERTY_FLEX: {
+            const auto* v =
+                static_cast<const lxb_css_property_flex_t*>(d->u.user);
+            if (v->type == LXB_CSS_FLEX_NONE) {
+                s.computed.flex_grow = 0;
+                s.computed.flex_shrink = 0;
+                s.computed.flex_basis = -1;
+                break;
+            }
+            if (v->grow.type == LXB_CSS_FLEX_GROW__NUMBER) {
+                const auto n = static_cast<int>(v->grow.number.num + 0.5);
+                s.computed.flex_grow =
+                    static_cast<std::uint8_t>(std::clamp(n, 0, 255));
+            }
+            if (v->shrink.type == LXB_CSS_FLEX_SHRINK__NUMBER) {
+                const auto n = static_cast<int>(v->shrink.number.num + 0.5);
+                s.computed.flex_shrink =
+                    static_cast<std::uint8_t>(std::clamp(n, 0, 255));
+            }
+            if (v->basis.type != LXB_CSS_VALUE__UNDEF) {
+                apply_flex_basis_value(v->basis, s);
+            }
+            break;
+        }
 
         // ── Layout-affecting ───────────────────────────────────────
         case LXB_CSS_PROPERTY_FONT_SIZE: {
@@ -444,10 +759,9 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
                     // apart from "multiplier."
                     int px = 0;
                     // For length type, the value lives in v->u.length.
-                    if (v->u.length.unit == LXB_CSS_UNIT__UNDEF
-                        || v->u.length.unit == LXB_CSS_UNIT_PX) {
-                        px = static_cast<int>(v->u.length.num + 0.5);
-                    }
+                    parse_length_value(v->u.length.num,
+                                       static_cast<int>(v->u.length.unit),
+                                       px);
                     if (px > 0)
                         s.computed.line_height_x100 =
                             static_cast<std::int16_t>(-px);
@@ -492,17 +806,31 @@ void apply_declaration(const lxb_css_rule_declaration_t* d, ResolvedStyle& s) {
         case LXB_CSS_PROPERTY_WIDTH: {
             const auto* v =
                 static_cast<const lxb_css_property_width_t*>(d->u.user);
-            int px = 0;
-            if (parse_length_px(v, px) && px >= 0)
-                s.computed.width = static_cast<std::int16_t>(px);
+            apply_width_value(*v, s.computed.width, -1);
             break;
         }
         case LXB_CSS_PROPERTY_HEIGHT: {
             const auto* v =
                 static_cast<const lxb_css_property_height_t*>(d->u.user);
-            int px = 0;
-            if (parse_length_px(v, px) && px >= 0)
-                s.computed.height = static_cast<std::int16_t>(px);
+            apply_width_value(*v, s.computed.height, -1);
+            break;
+        }
+        case LXB_CSS_PROPERTY_MIN_WIDTH: {
+            const auto* v =
+                static_cast<const lxb_css_property_min_width_t*>(d->u.user);
+            apply_width_value(*v, s.computed.min_width, 0);
+            break;
+        }
+        case LXB_CSS_PROPERTY_MAX_WIDTH: {
+            const auto* v =
+                static_cast<const lxb_css_property_max_width_t*>(d->u.user);
+            apply_width_value(*v, s.computed.max_width, -1);
+            break;
+        }
+        case LXB_CSS_PROPERTY_MIN_HEIGHT: {
+            const auto* v =
+                static_cast<const lxb_css_property_min_height_t*>(d->u.user);
+            apply_width_value(*v, s.computed.min_height, 0);
             break;
         }
         case LXB_CSS_PROPERTY_OVERFLOW_Y: {
@@ -566,6 +894,7 @@ public:
         // Reset non-inherited fields to their initial values.
         s.animated.background_rgba = 0x00000000u;  // transparent
         s.animated.border_rgba     = 0x00000000u;  // transparent
+        clear_box_shadow(s.animated);
         s.animated.tx = s.animated.ty = 0.0f;
         s.animated.scale_x = s.animated.scale_y = 1.0f;
         s.animated.rotation = 0.0f;

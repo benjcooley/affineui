@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -97,10 +98,33 @@ void Ui::css(std::string_view source) {
 }
 
 bool Ui::load(std::string_view path) {
-    std::ifstream f{std::string(path)};
+    const std::filesystem::path html_path{std::string(path)};
+    std::ifstream f{html_path};
     if (!f.good()) return false;
     std::stringstream ss;
     ss << f.rdbuf();
+    const auto base_dir = html_path.has_parent_path()
+                              ? html_path.parent_path()
+                              : std::filesystem::path{"."};
+    impl_->document.set_resource_loader(
+        [base_dir](std::string_view url) -> std::string {
+            const std::string raw{url};
+            if (raw.empty() || raw.find("://") != std::string::npos ||
+                raw.rfind("data:", 0) == 0) {
+                return {};
+            }
+
+            std::filesystem::path resource_path{raw};
+            if (resource_path.is_relative()) {
+                resource_path = base_dir / resource_path;
+            }
+
+            std::ifstream resource{resource_path, std::ios::binary};
+            if (!resource.good()) return {};
+            std::stringstream bytes;
+            bytes << resource.rdbuf();
+            return bytes.str();
+        });
     html(ss.str());
     return true;
 }

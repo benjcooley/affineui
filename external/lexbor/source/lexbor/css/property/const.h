@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2023 Alexander Borisov
+ * Copyright (C) 2026 Alexander Borisov
  *
  * Author: Alexander Borisov <borisov@lexbor.com>
  */
@@ -19,110 +19,121 @@
 
 
 enum {
-    LXB_CSS_PROPERTY__UNDEF                = 0x0000,
-    LXB_CSS_PROPERTY__CUSTOM               = 0x0001,
-    LXB_CSS_PROPERTY_ALIGN_CONTENT         = 0x0002,
-    LXB_CSS_PROPERTY_ALIGN_ITEMS           = 0x0003,
-    LXB_CSS_PROPERTY_ALIGN_SELF            = 0x0004,
-    LXB_CSS_PROPERTY_ALIGNMENT_BASELINE    = 0x0005,
-    LXB_CSS_PROPERTY_BACKGROUND_COLOR      = 0x0006,
-    LXB_CSS_PROPERTY_BASELINE_SHIFT        = 0x0007,
-    LXB_CSS_PROPERTY_BASELINE_SOURCE       = 0x0008,
-    LXB_CSS_PROPERTY_BORDER                = 0x0009,
-    LXB_CSS_PROPERTY_BORDER_BOTTOM         = 0x000a,
-    LXB_CSS_PROPERTY_BORDER_BOTTOM_COLOR   = 0x000b,
-    LXB_CSS_PROPERTY_BORDER_LEFT           = 0x000c,
-    LXB_CSS_PROPERTY_BORDER_LEFT_COLOR     = 0x000d,
-    LXB_CSS_PROPERTY_BORDER_RIGHT          = 0x000e,
-    LXB_CSS_PROPERTY_BORDER_RIGHT_COLOR    = 0x000f,
-    LXB_CSS_PROPERTY_BORDER_TOP            = 0x0010,
-    LXB_CSS_PROPERTY_BORDER_TOP_COLOR      = 0x0011,
-    LXB_CSS_PROPERTY_BOTTOM                = 0x0012,
-    LXB_CSS_PROPERTY_BOX_SIZING            = 0x0013,
-    LXB_CSS_PROPERTY_CLEAR                 = 0x0014,
-    LXB_CSS_PROPERTY_COLOR                 = 0x0015,
-    LXB_CSS_PROPERTY_DIRECTION             = 0x0016,
-    LXB_CSS_PROPERTY_DISPLAY               = 0x0017,
-    LXB_CSS_PROPERTY_DOMINANT_BASELINE     = 0x0018,
-    LXB_CSS_PROPERTY_FLEX                  = 0x0019,
-    LXB_CSS_PROPERTY_FLEX_BASIS            = 0x001a,
-    LXB_CSS_PROPERTY_FLEX_DIRECTION        = 0x001b,
-    LXB_CSS_PROPERTY_FLEX_FLOW             = 0x001c,
-    LXB_CSS_PROPERTY_FLEX_GROW             = 0x001d,
-    LXB_CSS_PROPERTY_FLEX_SHRINK           = 0x001e,
-    LXB_CSS_PROPERTY_FLEX_WRAP             = 0x001f,
-    LXB_CSS_PROPERTY_FLOAT                 = 0x0020,
-    LXB_CSS_PROPERTY_FLOAT_DEFER           = 0x0021,
-    LXB_CSS_PROPERTY_FLOAT_OFFSET          = 0x0022,
-    LXB_CSS_PROPERTY_FLOAT_REFERENCE       = 0x0023,
-    LXB_CSS_PROPERTY_FONT_FAMILY           = 0x0024,
-    LXB_CSS_PROPERTY_FONT_SIZE             = 0x0025,
-    LXB_CSS_PROPERTY_FONT_STRETCH          = 0x0026,
-    LXB_CSS_PROPERTY_FONT_STYLE            = 0x0027,
-    LXB_CSS_PROPERTY_FONT_WEIGHT           = 0x0028,
-    LXB_CSS_PROPERTY_HANGING_PUNCTUATION   = 0x0029,
-    LXB_CSS_PROPERTY_HEIGHT                = 0x002a,
-    LXB_CSS_PROPERTY_HYPHENS               = 0x002b,
-    LXB_CSS_PROPERTY_INSET_BLOCK_END       = 0x002c,
-    LXB_CSS_PROPERTY_INSET_BLOCK_START     = 0x002d,
-    LXB_CSS_PROPERTY_INSET_INLINE_END      = 0x002e,
-    LXB_CSS_PROPERTY_INSET_INLINE_START    = 0x002f,
-    LXB_CSS_PROPERTY_JUSTIFY_CONTENT       = 0x0030,
-    LXB_CSS_PROPERTY_LEFT                  = 0x0031,
-    LXB_CSS_PROPERTY_LETTER_SPACING        = 0x0032,
-    LXB_CSS_PROPERTY_LINE_BREAK            = 0x0033,
-    LXB_CSS_PROPERTY_LINE_HEIGHT           = 0x0034,
-    LXB_CSS_PROPERTY_MARGIN                = 0x0035,
-    LXB_CSS_PROPERTY_MARGIN_BOTTOM         = 0x0036,
-    LXB_CSS_PROPERTY_MARGIN_LEFT           = 0x0037,
-    LXB_CSS_PROPERTY_MARGIN_RIGHT          = 0x0038,
-    LXB_CSS_PROPERTY_MARGIN_TOP            = 0x0039,
-    LXB_CSS_PROPERTY_MAX_HEIGHT            = 0x003a,
-    LXB_CSS_PROPERTY_MAX_WIDTH             = 0x003b,
-    LXB_CSS_PROPERTY_MIN_HEIGHT            = 0x003c,
-    LXB_CSS_PROPERTY_MIN_WIDTH             = 0x003d,
-    LXB_CSS_PROPERTY_OPACITY               = 0x003e,
-    LXB_CSS_PROPERTY_ORDER                 = 0x003f,
-    LXB_CSS_PROPERTY_OVERFLOW_BLOCK        = 0x0040,
-    LXB_CSS_PROPERTY_OVERFLOW_INLINE       = 0x0041,
-    LXB_CSS_PROPERTY_OVERFLOW_WRAP         = 0x0042,
-    LXB_CSS_PROPERTY_OVERFLOW_X            = 0x0043,
-    LXB_CSS_PROPERTY_OVERFLOW_Y            = 0x0044,
-    LXB_CSS_PROPERTY_PADDING               = 0x0045,
-    LXB_CSS_PROPERTY_PADDING_BOTTOM        = 0x0046,
-    LXB_CSS_PROPERTY_PADDING_LEFT          = 0x0047,
-    LXB_CSS_PROPERTY_PADDING_RIGHT         = 0x0048,
-    LXB_CSS_PROPERTY_PADDING_TOP           = 0x0049,
-    LXB_CSS_PROPERTY_POSITION              = 0x004a,
-    LXB_CSS_PROPERTY_RIGHT                 = 0x004b,
-    LXB_CSS_PROPERTY_TAB_SIZE              = 0x004c,
-    LXB_CSS_PROPERTY_TEXT_ALIGN            = 0x004d,
-    LXB_CSS_PROPERTY_TEXT_ALIGN_ALL        = 0x004e,
-    LXB_CSS_PROPERTY_TEXT_ALIGN_LAST       = 0x004f,
-    LXB_CSS_PROPERTY_TEXT_COMBINE_UPRIGHT  = 0x0050,
-    LXB_CSS_PROPERTY_TEXT_DECORATION       = 0x0051,
-    LXB_CSS_PROPERTY_TEXT_DECORATION_COLOR = 0x0052,
-    LXB_CSS_PROPERTY_TEXT_DECORATION_LINE  = 0x0053,
-    LXB_CSS_PROPERTY_TEXT_DECORATION_STYLE = 0x0054,
-    LXB_CSS_PROPERTY_TEXT_INDENT           = 0x0055,
-    LXB_CSS_PROPERTY_TEXT_JUSTIFY          = 0x0056,
-    LXB_CSS_PROPERTY_TEXT_ORIENTATION      = 0x0057,
-    LXB_CSS_PROPERTY_TEXT_OVERFLOW         = 0x0058,
-    LXB_CSS_PROPERTY_TEXT_TRANSFORM        = 0x0059,
-    LXB_CSS_PROPERTY_TOP                   = 0x005a,
-    LXB_CSS_PROPERTY_UNICODE_BIDI          = 0x005b,
-    LXB_CSS_PROPERTY_VERTICAL_ALIGN        = 0x005c,
-    LXB_CSS_PROPERTY_VISIBILITY            = 0x005d,
-    LXB_CSS_PROPERTY_WHITE_SPACE           = 0x005e,
-    LXB_CSS_PROPERTY_WIDTH                 = 0x005f,
-    LXB_CSS_PROPERTY_WORD_BREAK            = 0x0060,
-    LXB_CSS_PROPERTY_WORD_SPACING          = 0x0061,
-    LXB_CSS_PROPERTY_WORD_WRAP             = 0x0062,
-    LXB_CSS_PROPERTY_WRAP_FLOW             = 0x0063,
-    LXB_CSS_PROPERTY_WRAP_THROUGH          = 0x0064,
-    LXB_CSS_PROPERTY_WRITING_MODE          = 0x0065,
-    LXB_CSS_PROPERTY_Z_INDEX               = 0x0066,
-    LXB_CSS_PROPERTY__LAST_ENTRY           = 0x0067
+    LXB_CSS_PROPERTY__UNDEF                     = 0x0000,
+    LXB_CSS_PROPERTY__CUSTOM                    = 0x0001,
+    LXB_CSS_PROPERTY_ALIGN_CONTENT              = 0x0002,
+    LXB_CSS_PROPERTY_ALIGN_ITEMS                = 0x0003,
+    LXB_CSS_PROPERTY_ALIGN_SELF                 = 0x0004,
+    LXB_CSS_PROPERTY_ALIGNMENT_BASELINE         = 0x0005,
+    LXB_CSS_PROPERTY_BACKGROUND                 = 0x0006,
+    LXB_CSS_PROPERTY_BACKGROUND_COLOR           = 0x0007,
+    LXB_CSS_PROPERTY_BASELINE_SHIFT             = 0x0008,
+    LXB_CSS_PROPERTY_BASELINE_SOURCE            = 0x0009,
+    LXB_CSS_PROPERTY_BORDER                     = 0x000a,
+    LXB_CSS_PROPERTY_BORDER_BOTTOM              = 0x000b,
+    LXB_CSS_PROPERTY_BORDER_BOTTOM_COLOR        = 0x000c,
+    LXB_CSS_PROPERTY_BORDER_BOTTOM_LEFT_RADIUS  = 0x000d,
+    LXB_CSS_PROPERTY_BORDER_BOTTOM_RIGHT_RADIUS = 0x000e,
+    LXB_CSS_PROPERTY_BORDER_COLOR               = 0x000f,
+    LXB_CSS_PROPERTY_BORDER_LEFT                = 0x0010,
+    LXB_CSS_PROPERTY_BORDER_LEFT_COLOR          = 0x0011,
+    LXB_CSS_PROPERTY_BORDER_RADIUS              = 0x0012,
+    LXB_CSS_PROPERTY_BORDER_RIGHT               = 0x0013,
+    LXB_CSS_PROPERTY_BORDER_RIGHT_COLOR         = 0x0014,
+    LXB_CSS_PROPERTY_BORDER_TOP                 = 0x0015,
+    LXB_CSS_PROPERTY_BORDER_TOP_COLOR           = 0x0016,
+    LXB_CSS_PROPERTY_BORDER_TOP_LEFT_RADIUS     = 0x0017,
+    LXB_CSS_PROPERTY_BORDER_TOP_RIGHT_RADIUS    = 0x0018,
+    LXB_CSS_PROPERTY_BOTTOM                     = 0x0019,
+    LXB_CSS_PROPERTY_BOX_SHADOW                 = 0x001a,
+    LXB_CSS_PROPERTY_BOX_SIZING                 = 0x001b,
+    LXB_CSS_PROPERTY_CLEAR                      = 0x001c,
+    LXB_CSS_PROPERTY_COLOR                      = 0x001d,
+    LXB_CSS_PROPERTY_COLUMN_GAP                 = 0x001e,
+    LXB_CSS_PROPERTY_DIRECTION                  = 0x001f,
+    LXB_CSS_PROPERTY_DISPLAY                    = 0x0020,
+    LXB_CSS_PROPERTY_DOMINANT_BASELINE          = 0x0021,
+    LXB_CSS_PROPERTY_FLEX                       = 0x0022,
+    LXB_CSS_PROPERTY_FLEX_BASIS                 = 0x0023,
+    LXB_CSS_PROPERTY_FLEX_DIRECTION             = 0x0024,
+    LXB_CSS_PROPERTY_FLEX_FLOW                  = 0x0025,
+    LXB_CSS_PROPERTY_FLEX_GROW                  = 0x0026,
+    LXB_CSS_PROPERTY_FLEX_SHRINK                = 0x0027,
+    LXB_CSS_PROPERTY_FLEX_WRAP                  = 0x0028,
+    LXB_CSS_PROPERTY_FLOAT                      = 0x0029,
+    LXB_CSS_PROPERTY_FLOAT_DEFER                = 0x002a,
+    LXB_CSS_PROPERTY_FLOAT_OFFSET               = 0x002b,
+    LXB_CSS_PROPERTY_FLOAT_REFERENCE            = 0x002c,
+    LXB_CSS_PROPERTY_FONT_FAMILY                = 0x002d,
+    LXB_CSS_PROPERTY_FONT_SIZE                  = 0x002e,
+    LXB_CSS_PROPERTY_FONT_STRETCH               = 0x002f,
+    LXB_CSS_PROPERTY_FONT_STYLE                 = 0x0030,
+    LXB_CSS_PROPERTY_FONT_WEIGHT                = 0x0031,
+    LXB_CSS_PROPERTY_GAP                        = 0x0032,
+    LXB_CSS_PROPERTY_HANGING_PUNCTUATION        = 0x0033,
+    LXB_CSS_PROPERTY_HEIGHT                     = 0x0034,
+    LXB_CSS_PROPERTY_HYPHENS                    = 0x0035,
+    LXB_CSS_PROPERTY_INSET_BLOCK_END            = 0x0036,
+    LXB_CSS_PROPERTY_INSET_BLOCK_START          = 0x0037,
+    LXB_CSS_PROPERTY_INSET_INLINE_END           = 0x0038,
+    LXB_CSS_PROPERTY_INSET_INLINE_START         = 0x0039,
+    LXB_CSS_PROPERTY_JUSTIFY_CONTENT            = 0x003a,
+    LXB_CSS_PROPERTY_LEFT                       = 0x003b,
+    LXB_CSS_PROPERTY_LETTER_SPACING             = 0x003c,
+    LXB_CSS_PROPERTY_LINE_BREAK                 = 0x003d,
+    LXB_CSS_PROPERTY_LINE_HEIGHT                = 0x003e,
+    LXB_CSS_PROPERTY_MARGIN                     = 0x003f,
+    LXB_CSS_PROPERTY_MARGIN_BOTTOM              = 0x0040,
+    LXB_CSS_PROPERTY_MARGIN_LEFT                = 0x0041,
+    LXB_CSS_PROPERTY_MARGIN_RIGHT               = 0x0042,
+    LXB_CSS_PROPERTY_MARGIN_TOP                 = 0x0043,
+    LXB_CSS_PROPERTY_MAX_HEIGHT                 = 0x0044,
+    LXB_CSS_PROPERTY_MAX_WIDTH                  = 0x0045,
+    LXB_CSS_PROPERTY_MIN_HEIGHT                 = 0x0046,
+    LXB_CSS_PROPERTY_MIN_WIDTH                  = 0x0047,
+    LXB_CSS_PROPERTY_OPACITY                    = 0x0048,
+    LXB_CSS_PROPERTY_ORDER                      = 0x0049,
+    LXB_CSS_PROPERTY_OVERFLOW_BLOCK             = 0x004a,
+    LXB_CSS_PROPERTY_OVERFLOW_INLINE            = 0x004b,
+    LXB_CSS_PROPERTY_OVERFLOW_WRAP              = 0x004c,
+    LXB_CSS_PROPERTY_OVERFLOW_X                 = 0x004d,
+    LXB_CSS_PROPERTY_OVERFLOW_Y                 = 0x004e,
+    LXB_CSS_PROPERTY_PADDING                    = 0x004f,
+    LXB_CSS_PROPERTY_PADDING_BOTTOM             = 0x0050,
+    LXB_CSS_PROPERTY_PADDING_LEFT               = 0x0051,
+    LXB_CSS_PROPERTY_PADDING_RIGHT              = 0x0052,
+    LXB_CSS_PROPERTY_PADDING_TOP                = 0x0053,
+    LXB_CSS_PROPERTY_POSITION                   = 0x0054,
+    LXB_CSS_PROPERTY_RIGHT                      = 0x0055,
+    LXB_CSS_PROPERTY_ROW_GAP                    = 0x0056,
+    LXB_CSS_PROPERTY_TAB_SIZE                   = 0x0057,
+    LXB_CSS_PROPERTY_TEXT_ALIGN                 = 0x0058,
+    LXB_CSS_PROPERTY_TEXT_ALIGN_ALL             = 0x0059,
+    LXB_CSS_PROPERTY_TEXT_ALIGN_LAST            = 0x005a,
+    LXB_CSS_PROPERTY_TEXT_COMBINE_UPRIGHT       = 0x005b,
+    LXB_CSS_PROPERTY_TEXT_DECORATION            = 0x005c,
+    LXB_CSS_PROPERTY_TEXT_DECORATION_COLOR      = 0x005d,
+    LXB_CSS_PROPERTY_TEXT_DECORATION_LINE       = 0x005e,
+    LXB_CSS_PROPERTY_TEXT_DECORATION_STYLE      = 0x005f,
+    LXB_CSS_PROPERTY_TEXT_INDENT                = 0x0060,
+    LXB_CSS_PROPERTY_TEXT_JUSTIFY               = 0x0061,
+    LXB_CSS_PROPERTY_TEXT_ORIENTATION           = 0x0062,
+    LXB_CSS_PROPERTY_TEXT_OVERFLOW              = 0x0063,
+    LXB_CSS_PROPERTY_TEXT_TRANSFORM             = 0x0064,
+    LXB_CSS_PROPERTY_TOP                        = 0x0065,
+    LXB_CSS_PROPERTY_UNICODE_BIDI               = 0x0066,
+    LXB_CSS_PROPERTY_VERTICAL_ALIGN             = 0x0067,
+    LXB_CSS_PROPERTY_VISIBILITY                 = 0x0068,
+    LXB_CSS_PROPERTY_WHITE_SPACE                = 0x0069,
+    LXB_CSS_PROPERTY_WIDTH                      = 0x006a,
+    LXB_CSS_PROPERTY_WORD_BREAK                 = 0x006b,
+    LXB_CSS_PROPERTY_WORD_SPACING               = 0x006c,
+    LXB_CSS_PROPERTY_WORD_WRAP                  = 0x006d,
+    LXB_CSS_PROPERTY_WRAP_FLOW                  = 0x006e,
+    LXB_CSS_PROPERTY_WRAP_THROUGH               = 0x006f,
+    LXB_CSS_PROPERTY_WRITING_MODE               = 0x0070,
+    LXB_CSS_PROPERTY_Z_INDEX                    = 0x0071,
+    LXB_CSS_PROPERTY__LAST_ENTRY                = 0x0072
 };
 typedef uintptr_t lxb_css_property_type_t;
 
@@ -166,6 +177,8 @@ enum {
     LXB_CSS_ALIGNMENT_BASELINE_TEXT_TOP     = LXB_CSS_VALUE_TEXT_TOP
 };
 typedef unsigned int lxb_css_alignment_baseline_type_t;
+
+
 
 
 
@@ -226,6 +239,20 @@ typedef unsigned int lxb_css_border_bottom_type_t;
 
 
 enum {
+    LXB_CSS_BORDER_BOTTOM_LEFT_RADIUS__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_BORDER_BOTTOM_LEFT_RADIUS__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_border_bottom_left_radius_type_t;
+
+enum {
+    LXB_CSS_BORDER_BOTTOM_RIGHT_RADIUS__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_BORDER_BOTTOM_RIGHT_RADIUS__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_border_bottom_right_radius_type_t;
+
+
+
+enum {
     LXB_CSS_BORDER_LEFT_THIN    = LXB_CSS_VALUE_THIN,
     LXB_CSS_BORDER_LEFT_MEDIUM  = LXB_CSS_VALUE_MEDIUM,
     LXB_CSS_BORDER_LEFT_THICK   = LXB_CSS_VALUE_THICK,
@@ -244,6 +271,12 @@ enum {
 typedef unsigned int lxb_css_border_left_type_t;
 
 
+
+enum {
+    LXB_CSS_BORDER_RADIUS__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_BORDER_RADIUS__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_border_radius_type_t;
 
 enum {
     LXB_CSS_BORDER_RIGHT_THIN    = LXB_CSS_VALUE_THIN,
@@ -286,11 +319,30 @@ typedef unsigned int lxb_css_border_top_type_t;
 
 
 enum {
+    LXB_CSS_BORDER_TOP_LEFT_RADIUS__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_BORDER_TOP_LEFT_RADIUS__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_border_top_left_radius_type_t;
+
+enum {
+    LXB_CSS_BORDER_TOP_RIGHT_RADIUS__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_BORDER_TOP_RIGHT_RADIUS__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_border_top_right_radius_type_t;
+
+enum {
     LXB_CSS_BOTTOM_AUTO        = LXB_CSS_VALUE_AUTO,
     LXB_CSS_BOTTOM__LENGTH     = LXB_CSS_VALUE__LENGTH,
     LXB_CSS_BOTTOM__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
 };
 typedef unsigned int lxb_css_bottom_type_t;
+
+enum {
+    LXB_CSS_BOX_SHADOW_NONE    = LXB_CSS_VALUE_NONE,
+    LXB_CSS_BOX_SHADOW_INSET   = LXB_CSS_VALUE_INSET,
+    LXB_CSS_BOX_SHADOW__LENGTH = LXB_CSS_VALUE__LENGTH
+};
+typedef unsigned int lxb_css_box_shadow_type_t;
 
 enum {
     LXB_CSS_BOX_SIZING_CONTENT_BOX = LXB_CSS_VALUE_CONTENT_BOX,
@@ -496,6 +548,12 @@ enum {
 typedef unsigned int lxb_css_color_type_t;
 
 enum {
+    LXB_CSS_COLUMN_GAP__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_COLUMN_GAP__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_column_gap_type_t;
+
+enum {
     LXB_CSS_DIRECTION_LTR = LXB_CSS_VALUE_LTR,
     LXB_CSS_DIRECTION_RTL = LXB_CSS_VALUE_RTL
 };
@@ -684,6 +742,12 @@ enum {
     LXB_CSS_FONT_WEIGHT_LIGHTER = LXB_CSS_VALUE_LIGHTER
 };
 typedef unsigned int lxb_css_font_weight_type_t;
+
+enum {
+    LXB_CSS_GAP__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_GAP__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_gap_type_t;
 
 enum {
     LXB_CSS_HANGING_PUNCTUATION_NONE      = LXB_CSS_VALUE_NONE,
@@ -962,6 +1026,12 @@ enum {
     LXB_CSS_RIGHT__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
 };
 typedef unsigned int lxb_css_right_type_t;
+
+enum {
+    LXB_CSS_ROW_GAP__LENGTH     = LXB_CSS_VALUE__LENGTH,
+    LXB_CSS_ROW_GAP__PERCENTAGE = LXB_CSS_VALUE__PERCENTAGE
+};
+typedef unsigned int lxb_css_row_gap_type_t;
 
 enum {
     LXB_CSS_TAB_SIZE__NUMBER = LXB_CSS_VALUE__NUMBER,

@@ -52,6 +52,10 @@ function(affineui_link_vendored_deps target)
                          "${CMAKE_BINARY_DIR}/_deps/lexbor" EXCLUDE_FROM_ALL)
     endif()
     if(TARGET lexbor_static)
+        if(NOT AFFINEUI_HTML_ENTITIES_FULL)
+            target_compile_definitions(lexbor_static PRIVATE
+                LXB_HTML_TOKENIZER_BASIC_ENTITIES)
+        endif()
         # BUILD_INTERFACE only — the static dep is embedded into our
         # archive at build time and isn't a runtime requirement for
         # downstream consumers, so we keep it out of the install EXPORT.
