@@ -3,16 +3,102 @@
 AffineUI is a GPU-accelerated HTML5/CSS browser layout and rendering
 engine for C++ games, editors, tools, and other native projects.
 
-The entire SDK library is two zero-dependency source files:
-
-- [`dist/affineui.h`](dist/affineui.h)
-- [`dist/affineui.cpp`](dist/affineui.cpp)
-
-The project focus is support for the browser features modern CSS
+AffineUI focuses on support for the browser features modern CSS
 component frameworks need to function: Bootstrap, Material UI,
 Tailwind-style utility systems, Ant-style component markup, and similar
 HTML/CSS UI libraries. The same runtime supports in-game UI, debug UI,
 editor panels, launchers, store panels, settings, and internal tooling.
+
+## Adding AffineUI to Your Game
+
+Download and add these two zero-dependency files to your project.
+
+- [`dist/affineui.h`](dist/affineui.h)
+- [`dist/affineui.cpp`](dist/affineui.cpp)
+
+Compile `affineui.cpp` once as C++20 and include `affineui.h` from
+your game code.
+
+Create `Hello.html` in your app's working directory:
+
+```html
+<!doctype html>
+<html>
+<head>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    main { font: 600 32px system-ui; color: white; }
+  </style>
+</head>
+<body>
+  <main>Hello from AffineUI</main>
+</body>
+</html>
+```
+
+Load it once at startup:
+
+```cpp
+affineui::Ui ui;
+if (!ui.load("Hello.html")) {
+    ui.html("<main>Hello from AffineUI</main>");
+}
+```
+
+For SDL based projects, forward SDL events to AffineUI and render the
+UI before swapping the window:
+
+```cpp
+#define AFFINEUI_WITH_SDL
+#include "affineui.h"
+
+affineui::Ui ui;
+ui.load("Hello.html");
+
+while (running) {
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (affineui::sdl::dispatch(ui, ev)) continue;
+    }
+
+    affineui::sdl::render(ui, window);
+    SDL_GL_SwapWindow(window);
+}
+```
+
+For Sokol projects, wire the UI into `sokol_app`:
+
+```cpp
+#define AFFINEUI_WITH_SOKOL
+#include "affineui.h"
+
+int main() {
+    affineui::Ui ui;
+    ui.load("Hello.html");
+
+    sapp_desc desc{};
+    desc.width = 1024;
+    desc.height = 768;
+    desc.window_title = "Hello";
+    affineui::sokol::wire(desc, ui);
+    sapp_run(&desc);
+}
+```
+
+Integrating into other code (hand authored integration):
+
+```cpp
+affineui::Ui ui;
+ui.load("Hello.html");
+
+// Translate host mouse/key input into affineui::Event.
+ui.dispatch(event);
+
+// Render once per frame into the current framebuffer.
+ui.render(framebuffer_width, framebuffer_height, dpi_scale);
+```
+
+## Why AffineUI?
 
 AffineUI exposes both a retained DOM API and a Dear ImGui-shaped
 immediate-mode C++ API over one style, layout, input, and rendering
