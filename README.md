@@ -1,6 +1,7 @@
-# AffineUI
+# AffineUI (Experimental software)
 
-AffineUI is a .cpp .h two source file zero dependency GPU-accelerated HTML5/CSS browser layout and rendering
+AffineUI is a (alpha quality still experimental) .cpp .h two source file zero 
+dependency GPU-accelerated HTML5/CSS browser layout and rendering
 engine for C++ games, editors, tools, and other native projects.
 
 AffineUI focuses on support for the browser features modern CSS
