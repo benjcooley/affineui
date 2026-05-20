@@ -17,7 +17,19 @@ rather than browser JavaScript.
 
 ![AffineUI rendering Bootstrap CSS](images/affineui_bootstrap.png)
 
-## Adding AffineUI to Your Game
+## Project Status
+
+AffineUI is **alpha-stage software**.
+
+The core renderer and layout engine are already capable of running substantial real-world HTML/CSS, including many Bootstrap, Tailwind, and Ant-style layouts. However, the implementation is still incomplete and has many known bugs in standards compliance, layout edge cases, rendering behavior, and framework compatibility.
+
+This is not yet a production-ready browser engine or a drop-in replacement for Chromium/WebKit. It is an in-progress native C++ HTML/CSS UI renderer intended for games, tools, and embedded native applications.
+
+Expect bugs. Expect missing features. Expect some web pages or frameworks to require workarounds.
+
+The goal of the project is ambitious: practical browser-style UI rendering in native C++ without embedding a browser or pulling in a large dependency stack.
+
+## Adding AffineUI to Your Game or App
 
 Download and add these two zero-dependency files to your project.
 
