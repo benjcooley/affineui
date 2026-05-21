@@ -3,6 +3,9 @@
 #include "affineui/painter.h"
 #include "internal/display_list.h"
 
+#include <algorithm>
+#include <cstdint>
+
 namespace affineui::detail {
 
 /// A Painter that records all calls into a DisplayList instead of

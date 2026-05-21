@@ -15,13 +15,19 @@
 
 set(_AFFINEUI_EXT "${CMAKE_CURRENT_LIST_DIR}/../external")
 
+# The NanoVG fork (NanoVG + our sokol_gfx backend) lives side-by-side with
+# the affineui repo. Override AFFINEUI_NANOVG_DIR if your checkout differs.
+set(AFFINEUI_NANOVG_DIR "${CMAKE_CURRENT_LIST_DIR}/../../affineui_nanovg" CACHE PATH
+    "Path to the affineui_nanovg fork (NanoVG + sokol_gfx backend)")
+
 function(affineui_check_vendored_deps out)
     set(_ok TRUE)
     foreach(_h
         "${_AFFINEUI_EXT}/sokol/sokol_gfx.h"
         "${_AFFINEUI_EXT}/sokol/sokol_app.h"
         "${_AFFINEUI_EXT}/sokol/sokol_glue.h"
-        "${_AFFINEUI_EXT}/nanovg/src/nanovg.h"
+        "${AFFINEUI_NANOVG_DIR}/src/nanovg.h"
+        "${AFFINEUI_NANOVG_DIR}/src/nanovg_sokol.h"
         "${_AFFINEUI_EXT}/stb/stb_image.h"
         "${_AFFINEUI_EXT}/stb/stb_truetype.h"
         "${_AFFINEUI_EXT}/lexbor/source/lexbor/html/html.h"
@@ -87,7 +93,7 @@ function(affineui_link_vendored_deps target)
     # would duplicate the host's symbols.
     target_include_directories(${target} SYSTEM PRIVATE
         "${_AFFINEUI_EXT}/sokol"
-        "${_AFFINEUI_EXT}/nanovg/src"
+        "${AFFINEUI_NANOVG_DIR}/src"
         "${_AFFINEUI_EXT}/stb"
     )
 
@@ -95,10 +101,10 @@ function(affineui_link_vendored_deps target)
     # stb_image inside its TU — we don't need separate impl TUs for
     # those.
     if(NOT AFFINEUI_HOST_PROVIDES_NANOVG
-       AND EXISTS "${_AFFINEUI_EXT}/nanovg/src/nanovg.c")
+       AND EXISTS "${AFFINEUI_NANOVG_DIR}/src/nanovg.c")
         target_sources(${target} PRIVATE
-            "${_AFFINEUI_EXT}/nanovg/src/nanovg.c")
-        set_source_files_properties("${_AFFINEUI_EXT}/nanovg/src/nanovg.c"
+            "${AFFINEUI_NANOVG_DIR}/src/nanovg.c")
+        set_source_files_properties("${AFFINEUI_NANOVG_DIR}/src/nanovg.c"
             PROPERTIES COMPILE_FLAGS
             "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
     endif()

@@ -17,6 +17,11 @@
 
 #if !defined(AFFINEUI_STUB_BUILD)
 #    include "nanovg.h"
+#    if defined(AFFINEUI_HAVE_EMBEDDED_FONTS)
+// Byte arrays generated at build time from assets/fonts/*.ttf by bin2c.
+#        include "roboto_regular.h"
+#        include "roboto_bold.h"
+#    endif
 #endif
 
 namespace affineui {
@@ -427,6 +432,26 @@ std::uint32_t register_font_file(NVGcontext* vg, const char* family, const char*
 }
 
 std::string_view register_default_font(NVGcontext* vg) {
+#if defined(AFFINEUI_HAVE_EMBEDDED_FONTS)
+    // Vendored default: Roboto, embedded into the library. This makes text
+    // metrics — and therefore layout — identical on Windows/macOS/Linux,
+    // instead of depending on whatever font the host OS happens to ship.
+    // Apps may register additional fonts afterwards.
+    if (nvgCreateFontMem(vg, "sans", affineui_font_roboto_regular,
+                         static_cast<int>(affineui_font_roboto_regular_len), 0) >= 0) {
+        nvgCreateFontMem(vg, "sans-serif", affineui_font_roboto_regular,
+                         static_cast<int>(affineui_font_roboto_regular_len), 0);
+        if (nvgCreateFontMem(vg, "sans-bold", affineui_font_roboto_bold,
+                             static_cast<int>(affineui_font_roboto_bold_len), 0) >= 0) {
+            nvgCreateFontMem(vg, "sans-serif-bold", affineui_font_roboto_bold,
+                             static_cast<int>(affineui_font_roboto_bold_len), 0);
+        }
+        // NOTE: italic / bold-italic faces aren't vendored yet, so emphasized
+        // text falls back to the upright form (see assets/fonts/NOTICE.md).
+        return "sans";
+    }
+    // If embedding somehow failed, fall through to host/system fonts.
+#endif
     // A font-file candidate. `index` > 0 selects a specific face from
     // a .ttc/.otc font collection (macOS Helvetica.ttc bundles
     // Regular + Bold + Light + obliques as faces 0..5; HelveticaNeue

@@ -48,8 +48,19 @@
     {
       "name": "msvc",
       "inherits": "base",
-      "displayName": "MSVC (Windows)",
+      "displayName": "MSVC (Windows, Visual Studio generator)",
       "generator": "Visual Studio 17 2022",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "ninja",
+      "inherits": "base",
+      "displayName": "Ninja (Windows, RelWithDebInfo) — flat single-config output",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" },
       "condition": {
         "type": "equals",
@@ -61,7 +72,8 @@
   "buildPresets": [
     { "name": "dev",     "configurePreset": "dev" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "minsize", "configurePreset": "minsize" }
+    { "name": "minsize", "configurePreset": "minsize" },
+    { "name": "ninja",   "configurePreset": "ninja" }
   ],
   "testPresets": [
     {
@@ -69,6 +81,11 @@
       "configurePreset": "dev",
       "output": { "outputOnFailure": true },
       "execution": { "stopOnFailure": false }
+    },
+    {
+      "name": "ninja",
+      "configurePreset": "ninja",
+      "output": { "outputOnFailure": true }
     }
   ]
 }

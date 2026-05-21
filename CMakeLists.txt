@@ -29,6 +29,7 @@ option(AFFINEUI_ENABLE_IMM      "Enable immediate-mode layer"  ON)
 option(AFFINEUI_ENABLE_C_API    "Build the extern \"C\" surface" ON)
 option(AFFINEUI_WARNINGS_AS_ERRORS "Treat warnings as errors"  OFF)
 option(AFFINEUI_HTML_ENTITIES_FULL "Use Lexbor's full HTML5 named entity table" OFF)
+option(AFFINEUI_NO_EMBEDDED_FONTS  "Don't embed the default Roboto font (use host/system fonts)" OFF)
 set(AFFINEUI_BACKEND "auto" CACHE STRING "GPU backend: auto|metal|d3d11|gl|wgpu")
 
 # ── "Bring your own" options for hosts that already vendor these deps ────────
@@ -110,8 +111,10 @@ target_sources(affineui PRIVATE
     src/text/font_manager.cpp
     src/paint/paint_driver.cpp
     src/paint/image_loader.cpp
-    src/paint/layer.cpp
-    src/paint/composite.cpp
+    # NOTE: src/paint/layer.cpp and src/paint/composite.cpp were the raw-GL
+    # FBO/compositor path. They're temporarily out of the build while the
+    # renderer paints NanoVG (via sokol_gfx) straight to the swapchain;
+    # they'll be reintroduced on top of sokol_gfx render targets (M2).
 
     # Renderer — graphics-only, windowing-toolkit-independent. App
     # delegates frame rendering to this; future SDL/glfw adapters use
@@ -136,8 +139,7 @@ if(AFFINEUI_DEPS_AVAILABLE)
     target_sources(affineui PRIVATE
         src/dom/lexbor_bridge.cpp
         src/paint/nanovg_painter.cpp
-        src/paint/nanovg_sokol.c
-        src/paint/nanovg_impl.c
+        src/paint/nanovg_sokol.c   # NanoVG-on-sokol_gfx backend (replaces nanovg_impl.c)
         src/paint/sokol_impl.c
         src/text/fontstash_impl.c
         src/text/stb_impl.c
@@ -181,6 +183,40 @@ affineui_link_backend(affineui ${AFFINEUI_BACKEND_RESOLVED})
 
 if(AFFINEUI_DEPS_AVAILABLE)
     affineui_link_vendored_deps(affineui)
+endif()
+
+# ─── Embedded default font (Roboto) ──────────────────────────────────────────
+# Embed the vendored font into the library so text renders identically on
+# every platform with no runtime asset path. The .ttf files under
+# assets/fonts are the committed source of truth; a tiny bin2c host tool
+# (cmake/bin2c.c) turns them into byte-array headers in the build tree.
+# Apps can register their own fonts on top; pass AFFINEUI_NO_EMBEDDED_FONTS
+# to drop the default and fall back to host/system fonts.
+if(AFFINEUI_DEPS_AVAILABLE AND NOT AFFINEUI_NO_EMBEDDED_FONTS)
+    add_executable(affineui_bin2c cmake/bin2c.c)
+    set(_affineui_fontgen "${CMAKE_BINARY_DIR}/generated/affineui_fonts")
+    file(MAKE_DIRECTORY "${_affineui_fontgen}")
+
+    function(affineui_embed_font ttf symbol header)
+        add_custom_command(
+            OUTPUT  "${_affineui_fontgen}/${header}"
+            COMMAND affineui_bin2c
+                    "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/${ttf}"
+                    "${_affineui_fontgen}/${header}"
+                    "${symbol}"
+            DEPENDS affineui_bin2c "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/${ttf}"
+            VERBATIM)
+    endfunction()
+
+    affineui_embed_font("Roboto-Regular.ttf" "affineui_font_roboto_regular" "roboto_regular.h")
+    affineui_embed_font("Roboto-Bold.ttf"    "affineui_font_roboto_bold"    "roboto_bold.h")
+
+    add_custom_target(affineui_fonts_gen DEPENDS
+        "${_affineui_fontgen}/roboto_regular.h"
+        "${_affineui_fontgen}/roboto_bold.h")
+    add_dependencies(affineui affineui_fonts_gen)
+    target_include_directories(affineui PRIVATE "${_affineui_fontgen}")
+    target_compile_definitions(affineui PRIVATE AFFINEUI_HAVE_EMBEDDED_FONTS)
 endif()
 
 # Platform link libs that sokol_app + NanoVG (GL backend) need.

@@ -27,7 +27,9 @@
 #include <utility>
 
 #if !defined(AFFINEUI_STUB_BUILD)
+#    include "sokol_gfx.h"
 #    include "sokol_app.h"
+#    include "sokol_glue.h"
 #    include "sokol_log.h"
 #endif
 
@@ -100,10 +102,18 @@ sapp_mouse_cursor map_cursor(int c) {
 
 void cb_init(void* user) {
     auto* impl = static_cast<detail::AppImpl*>(user);
-    // sokol_app has a current GL context by the time init_cb fires —
-    // safe to spin up the Renderer here. (Alternatively we could let
-    // the first render() lazily init; doing it now means any failure
-    // shows up immediately.)
+    // Bring up sokol_gfx against the swapchain sokol_app just created.
+    sg_desc sgd{};
+    sgd.environment = sglue_environment();
+    sgd.logger.func = slog_func;
+    sg_setup(&sgd);
+    if (!sg_isvalid()) {
+        impl->exit_code = 1;
+        sapp_request_quit();
+        return;
+    }
+    // NanoVG-on-sokol_gfx resources. (The renderer also inits lazily on
+    // the first render(), but doing it here surfaces failures early.)
     impl->renderer.init_gl();
     if (!impl->renderer.ready()) {
         impl->exit_code = 1;
@@ -114,15 +124,34 @@ void cb_init(void* user) {
 void cb_frame(void* user) {
     auto* impl = static_cast<detail::AppImpl*>(user);
     impl->last_dpi = sapp_dpi_scale();
+
+    const Color c = impl->config.clear_color;
+    sg_pass pass{};
+    pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+    pass.action.colors[0].clear_value.r = c.r / 255.0f;
+    pass.action.colors[0].clear_value.g = c.g / 255.0f;
+    pass.action.colors[0].clear_value.b = c.b / 255.0f;
+    pass.action.colors[0].clear_value.a = c.a / 255.0f;
+    pass.action.depth.load_action   = SG_LOADACTION_CLEAR;
+    pass.action.depth.clear_value   = 1.0f;
+    pass.action.stencil.load_action = SG_LOADACTION_CLEAR;
+    pass.action.stencil.clear_value = 0;
+    pass.swapchain = sglue_swapchain();
+
+    sg_begin_pass(&pass);
     impl->renderer.render(impl->document,
                           sapp_width(), sapp_height(),
                           impl->last_dpi);
+    sg_end_pass();
+    sg_commit();
+
     if (impl->quit_requested) sapp_request_quit();
 }
 
 void cb_cleanup(void* user) {
     auto* impl = static_cast<detail::AppImpl*>(user);
     impl->renderer.shutdown();
+    sg_shutdown();
 }
 
 // Translate a sokol_app event to our `affineui::Event` and forward to

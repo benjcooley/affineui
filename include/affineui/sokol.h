@@ -36,7 +36,10 @@
 
 #include "affineui/ui.h"
 
+#include <sokol_gfx.h>
 #include <sokol_app.h>
+#include <sokol_glue.h>
+#include <sokol_log.h>
 
 #include <string>
 
@@ -180,9 +183,34 @@ inline void render(Ui& ui) {
 // ── One-call wire-up ────────────────────────────────────────────────
 
 namespace detail {
+inline void cb_init_(void* user) {
+    (void)user;
+    // Bring up sokol_gfx against the swapchain sokol_app created. NanoVG
+    // resources init lazily on the first render() (which needs sg valid).
+    sg_desc d{};
+    d.environment = sglue_environment();
+    d.logger.func = slog_func;
+    sg_setup(&d);
+}
 inline void cb_frame_(void* user) {
     auto& ui = *static_cast<Ui*>(user);
+    const Color c = ui.clear_color();
+    sg_pass pass{};
+    pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+    pass.action.colors[0].clear_value.r = c.r / 255.0f;
+    pass.action.colors[0].clear_value.g = c.g / 255.0f;
+    pass.action.colors[0].clear_value.b = c.b / 255.0f;
+    pass.action.colors[0].clear_value.a = c.a / 255.0f;
+    pass.action.depth.load_action   = SG_LOADACTION_CLEAR;
+    pass.action.depth.clear_value   = 1.0f;
+    pass.action.stencil.load_action = SG_LOADACTION_CLEAR;
+    pass.action.stencil.clear_value = 0;
+    pass.swapchain = sglue_swapchain();
+
+    sg_begin_pass(&pass);
     affineui::sokol::render(ui);
+    sg_end_pass();
+    sg_commit();
 }
 inline void cb_event_(const sapp_event* ev, void* user) {
     auto& ui = *static_cast<Ui*>(user);
@@ -191,6 +219,7 @@ inline void cb_event_(const sapp_event* ev, void* user) {
 inline void cb_cleanup_(void* user) {
     auto& ui = *static_cast<Ui*>(user);
     ui.renderer().shutdown();
+    sg_shutdown();
 }
 }  // namespace detail
 
@@ -204,6 +233,7 @@ inline void cb_cleanup_(void* user) {
 /// from inside them.
 inline void wire(sapp_desc& desc, Ui& ui) {
     desc.user_data           = &ui;
+    desc.init_userdata_cb    = detail::cb_init_;
     desc.frame_userdata_cb   = detail::cb_frame_;
     desc.event_userdata_cb   = detail::cb_event_;
     desc.cleanup_userdata_cb = detail::cb_cleanup_;
