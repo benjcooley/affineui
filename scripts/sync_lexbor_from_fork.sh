@@ -3,19 +3,19 @@
 #
 # Default layout:
 #   workspace/
-#     affineui/   <-- this repo
-#     lexbor/     <-- maintained fork / patch stack
+#     affineui/           <-- this repo
+#     affineui_lexbor/    <-- maintained fork (source of truth)
 #
 # Usage:
 #   scripts/sync_lexbor_from_fork.sh
-#   scripts/sync_lexbor_from_fork.sh /path/to/lexbor-fork
+#   scripts/sync_lexbor_from_fork.sh /path/to/affineui_lexbor
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SRC="${1:-${AFFINEUI_LEXBOR_FORK:-${REPO_ROOT}/../lexbor}}"
+SRC="${1:-${AFFINEUI_LEXBOR_FORK:-${REPO_ROOT}/../affineui_lexbor}}"
 DST="${REPO_ROOT}/external/lexbor"
 
 if [[ ! -f "${SRC}/CMakeLists.txt" ||
