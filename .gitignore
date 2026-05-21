@@ -60,3 +60,7 @@ external/**/_build/
 .cache/
 compile_commands.json
 .envrc
+
+# Python bytecode (amalgamate.py)
+__pycache__/
+*.pyc
