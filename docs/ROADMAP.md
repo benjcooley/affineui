@@ -192,9 +192,8 @@ Things that *could* land if there's demand. None are committed:
   `doc->ev_destroy` for the destroy walk, leaving orphan cascade
   entries that get reclaimed with the document. Phase 3 dumb-
   reconcile sidesteps the issue entirely.
-- **Lexbor `event_destroy` NULL deref.** Patched in
-  `patches/lexbor-html-event-destroy-null-list.patch`; applied on the
-  sibling Lexbor fork branch. Real upstream bug, narrow path, no
+- **Lexbor `event_destroy` NULL deref.** Patched on the `affineui_lexbor`
+  fork (the source of truth). Real upstream bug, narrow path, no
   upstream issue filed yet.
 - **Text vertical metric.** Intrinsic height in the Yoga adapter
   uses a hand-tuned constant. Plumbing real `nvgTextMetrics` is a

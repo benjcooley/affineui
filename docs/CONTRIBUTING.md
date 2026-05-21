@@ -12,9 +12,9 @@ can wreck the size budget. Help us stay in the first category.
    under 2 MB with the bootstrap demo. PRs that meaningfully grow the
    binary need to justify it.
 3. **Vendored deps are off-limits for direct edits.** For Lexbor, patch
-   the sibling fork branch and sync it with
-   `scripts/sync_lexbor_from_fork.sh`; keep any long-lived patches
-   documented in `patches/`.
+   the `affineui_lexbor` fork (the source of truth) and sync it into
+   `external/lexbor` with `scripts/sync_lexbor_from_fork.sh`. Same model
+   for NanoVG via the `affineui_nanovg` fork.
 4. **No new dependencies without discussion.** Open an issue first. The
    bar is: "must be single-header (or two-file), permissively
    licensed, and replace meaningful code we'd otherwise write."
