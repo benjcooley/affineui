@@ -237,6 +237,15 @@ inline void wire(sapp_desc& desc, Ui& ui) {
     desc.frame_userdata_cb   = detail::cb_frame_;
     desc.event_userdata_cb   = detail::cb_event_;
     desc.cleanup_userdata_cb = detail::cb_cleanup_;
+    // Request a GL 4.1 core context on the GL backend (ignored by D3D11/
+    // Metal). sokol defaults to GL 4.3 on Linux, which fails to create a
+    // context on drivers that cap lower — e.g. WSLg's Mesa/D3D12 (GL 4.2).
+    // 4.1 is sokol's own macOS default and is plenty for sokol_gfx + our
+    // shaders. Respect an explicit caller override.
+    if (desc.gl.major_version == 0) {
+        desc.gl.major_version = 4;
+        desc.gl.minor_version = 1;
+    }
 }
 
 }  // namespace affineui::sokol

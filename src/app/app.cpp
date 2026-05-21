@@ -217,6 +217,12 @@ int App::run() {
     desc.high_dpi             = impl_->config.high_dpi;
     desc.swap_interval        = impl_->config.vsync ? 1 : 0;
     desc.sample_count         = 1;
+    // GL 4.1 core on the GL backend (ignored by D3D11/Metal). sokol's Linux
+    // default of GL 4.3 fails to create a context on drivers that cap lower
+    // (e.g. WSLg's Mesa/D3D12 at GL 4.2); 4.1 is enough for sokol_gfx + our
+    // shaders. See affineui::sokol::wire() for the examples' path.
+    desc.gl.major_version     = 4;
+    desc.gl.minor_version     = 1;
     desc.logger.func          = slog_func;
     sapp_run(&desc);
     return impl_->exit_code;
