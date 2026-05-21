@@ -6,11 +6,12 @@ function(affineui_detect_backend out requested)
     if(_chosen STREQUAL "auto")
         # NanoVG now renders through sokol_gfx (affineui_nanovg's
         # nanovg_sokol backend), so we pick the native backend per
-        # platform. The hand-written shaders in nanovg_sokol.h currently
-        # cover HLSL (D3D11) and GLSL (GL); Metal/MSL is a TODO, so macOS
-        # stays on GL for now.
+        # platform. The hand-written shaders in nanovg_sokol.h cover
+        # HLSL (D3D11), GLSL (GL), and MSL (Metal).
         if(WIN32)
             set(_chosen "d3d11")
+        elseif(APPLE)
+            set(_chosen "metal")
         else()
             set(_chosen "gl")
         endif()

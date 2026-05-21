@@ -45,12 +45,11 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-# Deferred jobs (tracked, intentionally not run yet):
-#   * macOS — sokol is Metal-only on macOS and nanovg_sokol.h has no MSL
-#     shader variant yet (HLSL + GLSL only). Add a macos-latest job once the
-#     Metal/MSL path lands.
-#   * Amalgamator (two-file dist) — tools/amalgamate.py's manifest still
-#     references the removed GL paint path (layer.cpp/composite.cpp/
-#     nanovg_impl.c) and omits sokol_gfx/sokol_glue. Returns as a job once it
-#     emits a buildable sokol_gfx two-file SDK (and the job should *compile*
-#     the output, not just emit it).
+# Ready to enable (validated locally on macOS, not yet wired as CI jobs):
+#   * macOS — nanovg_sokol.h now ships an MSL shader variant, so the auto
+#     backend is Metal on Apple (GL still selectable via AFFINEUI_BACKEND=gl).
+#     A macos-latest job can build + test both backends.
+#   * Amalgamator (two-file dist) — tools/amalgamate.py emits a buildable
+#     sokol_gfx two-file SDK (manifest tracks nanovg_sokol + sokol_gfx/glue,
+#     no GL paint path). The job should *compile* the generated affineui.cpp
+#     for each backend, not just emit it.

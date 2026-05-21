@@ -123,7 +123,6 @@ function(affineui_link_vendored_deps target)
     foreach(_tu
         "${CMAKE_CURRENT_SOURCE_DIR}/src/paint/nanovg_painter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/paint/nanovg_sokol.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/paint/nanovg_impl.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/paint/sokol_impl.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/text/fontstash_impl.c"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/text/stb_impl.c"

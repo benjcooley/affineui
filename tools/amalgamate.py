@@ -125,8 +125,6 @@ ENGINE_SOURCES = [
     "src/text/font_manager.cpp",
     "src/paint/paint_driver.cpp",
     "src/paint/image_loader.cpp",
-    "src/paint/layer.cpp",
-    "src/paint/composite.cpp",
     "src/paint/nanovg_painter.cpp",
     "src/render/renderer.cpp",
     "src/engine/box.cpp",
@@ -151,12 +149,12 @@ ENGINE_SOURCES = [
 # stitching to bring in a single-header dep). They go inside one
 # `extern "C" { ... }` block at the tail of ``affineui.cpp`` so their
 # symbols keep C linkage when the file is compiled as C++. Order
-# matters: stb_truetype must be in scope before fontstash uses it, and
-# nanovg core must be in scope before the GL backend.
+# matters: stb_truetype must be in scope before fontstash uses it,
+# nanovg core before the nanovg_sokol backend, and sokol_gfx before
+# the sokol_app/glue implementation.
 VENDORED_C_TUS = [
     "src/text/stb_impl.c",
     "src/text/fontstash_impl.c",
-    "src/paint/nanovg_impl.c",
     "src/paint/nanovg_sokol.c",
     "src/paint/sokol_impl.c",
 ]
@@ -165,12 +163,13 @@ REQUIRED_EXTERNAL_FILES = [
     "external/yoga/yoga/Yoga.h",
     "external/nanovg/src/nanovg.c",
     "external/nanovg/src/nanovg.h",
-    "external/nanovg/src/nanovg_gl.h",
-    "external/nanovg/src/nanovg_gl_utils.h",
+    "external/nanovg/src/nanovg_sokol.h",
     "external/nanovg/src/fontstash.h",
     "external/nanovg/src/stb_image.h",
     "external/nanovg/src/stb_truetype.h",
+    "external/sokol/sokol_gfx.h",
     "external/sokol/sokol_app.h",
+    "external/sokol/sokol_glue.h",
     "external/sokol/sokol_log.h",
 ]
 
@@ -183,11 +182,12 @@ INTERNAL_PREFIXES = ("affineui/", "internal/", "engine/", "layout/", "imm/")
 INLINED_EXTERNAL_PREFIXES = (
     "lexbor/",
     "yoga/",
+    "sokol_gfx.h",
     "sokol_app.h",
+    "sokol_glue.h",
     "sokol_log.h",
     "nanovg.h",
-    "nanovg_gl.h",
-    "nanovg_gl_utils.h",
+    "nanovg_sokol.h",
     "fontstash.h",
     "stb_image.h",
     "stb_truetype.h",
@@ -202,11 +202,15 @@ LEXBOR_REPEATABLE_HEADERS = {
 }
 REPEATABLE_EXTERNAL_HEADERS = {
     "external/nanovg/src/fontstash.h",
-    "external/nanovg/src/nanovg_gl.h",
-    "external/nanovg/src/nanovg_gl_utils.h",
     "external/nanovg/src/stb_image.h",
     "external/nanovg/src/stb_truetype.h",
+    # sokol headers split declarations (guarded by *_INCLUDED) from the
+    # implementation (guarded by SOKOL_IMPL). They are emitted once for
+    # declarations (renderer block) and again for the implementation
+    # (sokol_impl.c), so they must be re-emittable.
+    "external/sokol/sokol_gfx.h",
     "external/sokol/sokol_app.h",
+    "external/sokol/sokol_glue.h",
     "external/sokol/sokol_log.h",
 }
 
@@ -621,46 +625,41 @@ def emit_yoga_block(root: Path) -> str:
 
 
 def emit_renderer_declaration_block(root: Path) -> str:
+    # Declarations the C++ implementation TUs (renderer.cpp, app.cpp,
+    # nanovg_painter.cpp) reference: the sokol_gfx/app/glue API and the
+    # NanoVG + nanovg_sokol backend API. The consumer selects the sokol
+    # backend (SOKOL_GLCORE / SOKOL_METAL / SOKOL_D3D11) via a compile
+    # define for the whole TU. These are the declaration-side includes;
+    # the matching implementations come from the vendored-C block
+    # (sokol_impl.c / nanovg_sokol.c), which is why the sokol headers are
+    # listed as REPEATABLE.
     emitted_headers: set[Path] = set()
     parts: list[str] = [
         "// ─── Renderer/windowing vendored declarations ────────────────────────\n",
         "#if !defined(AFFINEUI_STUB_BUILD)\n",
-        "#  if defined(__APPLE__)\n",
-        "#    define GL_SILENCE_DEPRECATION\n",
-        "#    include <OpenGL/gl3.h>\n",
-        "#  elif defined(_WIN32)\n",
-        "#    define WIN32_LEAN_AND_MEAN\n",
-        "#    define NOMINMAX\n",
-        "#    include <windows.h>\n",
-        "#    include <GL/gl.h>\n",
-        "#  else\n",
-        "#    define GL_GLEXT_PROTOTYPES\n",
-        "#    include <GL/gl.h>\n",
-        "#    include <GL/glext.h>\n",
-        "#  endif\n",
+        "#  if !defined(AFFINEUI_HOST_PROVIDES_SOKOL)\n",
+    ]
+    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_log.h",
+                                      emitted_headers))
+    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_gfx.h",
+                                      emitted_headers))
+    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_app.h",
+                                      emitted_headers))
+    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_glue.h",
+                                      emitted_headers))
+    parts.extend([
+        "#  endif  // !AFFINEUI_HOST_PROVIDES_SOKOL\n",
         "\n",
         "#  if !defined(AFFINEUI_HOST_PROVIDES_NANOVG)\n",
-        "#    define NANOVG_GL3 1\n",
-    ]
+    ])
     parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg.h",
                                       emitted_headers))
-    parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg_gl.h",
-                                      emitted_headers))
     parts.append('extern "C" {\n')
-    parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg_gl_utils.h",
+    parts.append(expand_external_file(root, root / "external" / "nanovg" / "src" / "nanovg_sokol.h",
                                       emitted_headers))
     parts.append('}  // extern "C"\n')
     parts.extend([
         "#  endif  // !AFFINEUI_HOST_PROVIDES_NANOVG\n",
-        "\n",
-        "#  if !defined(AFFINEUI_HOST_PROVIDES_SOKOL)\n",
-    ])
-    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_log.h",
-                                      emitted_headers))
-    parts.append(expand_external_file(root, root / "external" / "sokol" / "sokol_app.h",
-                                      emitted_headers))
-    parts.extend([
-        "#  endif  // !AFFINEUI_HOST_PROVIDES_SOKOL\n",
         "#endif  // !AFFINEUI_STUB_BUILD\n",
         "\n",
     ])
@@ -692,11 +691,13 @@ def emit_vendored_c_block(root: Path, cwrap_blocks: list[FileBlock],
     parts.append('}  // extern "C"\n\n')
     parts.append(
         "// Implementation macros are single-use; clear them before any later\n"
-        "// declaration-only repeat of these upstream headers.\n"
-        "#undef NANOVG_GL3_IMPLEMENTATION\n"
-        "#undef NANOVG_GL_IMPLEMENTATION\n"
+        "// declaration-only repeat of these upstream headers (the renderer\n"
+        "// declaration block re-includes the sokol + nanovg_sokol headers).\n"
+        "#undef NANOVG_SOKOL_IMPLEMENTATION\n"
         "#undef SOKOL_IMPL\n"
+        "#undef SOKOL_GFX_IMPL\n"
         "#undef SOKOL_APP_IMPL\n"
+        "#undef SOKOL_GLUE_IMPL\n"
         "#undef SOKOL_LOG_IMPL\n"
         "#undef FONTSTASH_IMPLEMENTATION\n"
         "#undef STB_IMAGE_IMPLEMENTATION\n"
