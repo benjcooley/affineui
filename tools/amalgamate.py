@@ -666,6 +666,57 @@ def emit_renderer_declaration_block(root: Path) -> str:
     return "".join(parts)
 
 
+def emit_adapter_source(root: Path, rel_path: str,
+                        strip_includes: set[str]) -> str:
+    """Inline an opt-in windowing adapter (affineui/sokol.h or sdl.h) into
+    the public header. Drops ``#pragma once`` and internal ``affineui/``
+    includes (already inlined above), plus any include named in
+    ``strip_includes`` (vendored deps inlined separately). Every other
+    include is kept in place — notably ``<SDL.h>``, which the SDL adapter
+    expects the consumer to provide."""
+    text = (root / rel_path).read_text(encoding="utf-8")
+    out: list[str] = [render_external_header(rel_path)]
+    for line in text.splitlines():
+        if PRAGMA_ONCE_RE.match(line):
+            continue
+        m = ANY_INCLUDE_RE.match(line)
+        if m and (is_internal_include(m.group(1)) or m.group(1) in strip_includes):
+            continue
+        out.append(line.rstrip())
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out) + "\n"
+
+
+def emit_adapter_block(root: Path) -> str:
+    """Opt-in windowing adapters for the two-file SDK. The sokol adapter is
+    fully self-contained: sokol is vendored, so its declarations inline
+    under the AFFINEUI_WITH_SOKOL guard ahead of the adapter body. The SDL
+    adapter keeps ``#include <SDL.h>`` — SDL2 is an external dependency the
+    consumer links themselves."""
+    sokol_strip = {"sokol_gfx.h", "sokol_app.h", "sokol_glue.h", "sokol_log.h"}
+    parts: list[str] = [
+        "// ─── windowing adapters (opt-in: define AFFINEUI_WITH_SOKOL / _SDL) ──────\n",
+        "#if defined(AFFINEUI_WITH_SOKOL)\n",
+    ]
+    emitted_headers: set[Path] = set()
+    for h in ("sokol_log.h", "sokol_gfx.h", "sokol_app.h", "sokol_glue.h"):
+        parts.append(expand_external_file(root, root / "external" / "sokol" / h,
+                                          emitted_headers))
+    parts.append(emit_adapter_source(root, "include/affineui/sokol.h", sokol_strip))
+    parts.extend([
+        "#endif  // AFFINEUI_WITH_SOKOL\n",
+        "\n",
+        "#if defined(AFFINEUI_WITH_SDL)\n",
+    ])
+    parts.append(emit_adapter_source(root, "include/affineui/sdl.h", set()))
+    parts.extend([
+        "#endif  // AFFINEUI_WITH_SDL\n",
+        "\n",
+    ])
+    return "".join(parts)
+
+
 def render_external_source_block(root: Path, rel_path: str,
                                  emitted_external_headers: set[Path]) -> str:
     return render_block(process_file(root, rel_path,
@@ -730,6 +781,9 @@ def emit_header(root: Path, out_path: Path, version: str) -> int:
     parts.append("\n")
     for b in blocks:
         parts.append(render_block(b))
+    # Opt-in windowing adapters last: they reference affineui::Ui / Event /
+    # Key declared by the public headers above.
+    parts.append(emit_adapter_block(root))
     parts.append("#endif  // AFFINEUI_AMALGAMATED_H\n")
 
     text = "".join(parts).rstrip() + "\n"
@@ -781,7 +835,11 @@ def emit_impl(root: Path, out_path: Path, version: str, cxx: str) -> int:
         "// ─── vendored-symbol shielding (TU-local linkage) ───────────────────────\n"
         "// Each define is honored by the matching upstream header; the\n"
         "// AFFINEUI_HOST_PROVIDES_* guard lets a host swap in its own copy.\n"
-        "#ifndef AFFINEUI_HOST_PROVIDES_SOKOL\n"
+        "// sokol is shielded to internal linkage by default, but NOT when\n"
+        "// AFFINEUI_WITH_SOKOL is set: that opts into the affineui::sokol\n"
+        "// adapter, whose inline code (and the consumer's own sapp_run call)\n"
+        "// must see sokol's API with external linkage.\n"
+        "#if !defined(AFFINEUI_HOST_PROVIDES_SOKOL) && !defined(AFFINEUI_WITH_SOKOL)\n"
         "#  define SOKOL_API_DECL static\n"
         "#  define SOKOL_API_IMPL static\n"
         "#endif\n"
