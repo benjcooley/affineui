@@ -1,3 +1,13 @@
+<!-- AFFINEUI FORK -->
+> ⚠️ **This is an [AffineUI](https://github.com/benjcooley/affineui) fork of Lexbor.**
+> The **`affineui`** branch carries a small patch set on top of upstream `v2.4.0`
+> (framework CSS shorthands like `border-radius`/`box-shadow`/`gap`, pseudo-class
+> specificity, and an `event_destroy` null guard). **See [AFFINEUI_README.md](AFFINEUI_README.md)**
+> and [PATCHES.md](PATCHES.md). The `master` branch is pristine upstream; everything
+> below is Lexbor's original README.
+
+---
+
 ## Lexbor: Crafting a Browser Engine with Simplicity and Flexibility
 
 Why build yet another browser engine?
