@@ -1,9 +1,20 @@
 # external/
 
-Pinned snapshots of upstream dependencies. These directories are checked
-in so a normal clone can configure and build without network access.
-Refreshes are explicit maintenance steps, not part of CMake configure or
-build.
+Vendored dependencies, checked in so a normal clone configures and builds
+without network access.
+
+**`lexbor/` and `nanovg/` are git SUBTREES** of the maintained AffineUI forks
+(`affineui_lexbor` @ `affineui`, `affineui_nanovg` @ `master`) — they are the
+**canonical, in-tree, editable source**. Edit them here directly (e.g. extend
+lexbor's CSS), build, and the change ships. Sync with the forks via subtree:
+
+```bash
+scripts/sync_lexbor_from_fork.sh        # git subtree pull  (fork -> here)
+git subtree push --prefix=external/lexbor <fork-path> affineui   # here -> fork
+# (sync_nanovg_from_fork.sh / external/nanovg, branch master, likewise)
+```
+
+`sokol/`, `stb/`, `yoga/` remain pinned snapshots (refresh = explicit step).
 
 ## Inventory
 
@@ -17,9 +28,9 @@ build.
 
 ## Rules of engagement
 
-1. **Don't edit vendored sources directly.** For Lexbor, make the change
-   in the sibling fork (`../lexbor`) on the `affineui/v2.4.0` branch,
-   then run `scripts/sync_lexbor_from_fork.sh`.
+1. **Snapshots vs subtrees.** `lexbor/` + `nanovg/` are subtrees — edit them
+   in-tree (then `git subtree push` to the fork). `sokol/`, `stb/`, `yoga/`
+   are pinned snapshots — don't edit directly; bump the pin instead.
 2. **Pin versions explicitly.** Whatever is committed under `external/`
    is what we test against. Updating a pin = a PR with a CI run.
 3. **License attribution.** Each library's own `LICENSE` file stays
@@ -36,25 +47,6 @@ build.
 - `lexbor/` is a real CMake project — we `add_subdirectory(EXCLUDE_FROM_ALL)`
   it and link `lexbor_static`.
 - `yoga/` is a real CMake project — same treatment, links `yogacore`.
-
-## Refreshing Lexbor
-
-The maintained Lexbor patch stack lives next to this repo:
-
-```bash
-workspace/
-  affineui/
-  lexbor/      # branch: affineui/v2.4.0
-```
-
-After committing changes in `../lexbor`, copy the fork into the vendored
-tree:
-
-```bash
-./scripts/sync_lexbor_from_fork.sh
-```
-
-The script accepts an explicit fork path if the checkout lives elsewhere.
 
 ## Optional (not vendored by default)
 

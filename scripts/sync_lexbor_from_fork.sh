@@ -1,64 +1,17 @@
 #!/usr/bin/env bash
-# Sync the sibling AffineUI Lexbor fork into the checked-in vendor copy.
+# external/lexbor is a git SUBTREE of the affineui_lexbor fork (branch
+# `affineui`). It is the canonical, in-tree, editable lexbor source — extend
+# CSS here (declarations + parser + serializer, or .ton + regenerate via
+# utils/), build, and it ships in the repo.
 #
-# Default layout:
-#   workspace/
-#     affineui/           <-- this repo
-#     affineui_lexbor/    <-- maintained fork (source of truth)
+#   Pull the fork's latest into the subtree:   scripts/sync_lexbor_from_fork.sh
+#   Push local lexbor changes back to the fork:
+#       git subtree push --prefix=external/lexbor <fork-path> affineui
 #
-# Usage:
-#   scripts/sync_lexbor_from_fork.sh
-#   scripts/sync_lexbor_from_fork.sh /path/to/affineui_lexbor
-
+# Pass an explicit fork path or set AFFINEUI_LEXBOR_FORK if it isn't a sibling.
 set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-SRC="${1:-${AFFINEUI_LEXBOR_FORK:-${REPO_ROOT}/../affineui_lexbor}}"
-DST="${REPO_ROOT}/external/lexbor"
-
-if [[ ! -f "${SRC}/CMakeLists.txt" ||
-      ! -f "${SRC}/source/lexbor/html/html.h" ||
-      ! -f "${SRC}/source/lexbor/css/css.h" ]]; then
-    echo "error: '${SRC}' does not look like a Lexbor checkout" >&2
-    echo "usage: $0 [/path/to/lexbor-fork]" >&2
-    exit 2
-fi
-
-mkdir -p "${REPO_ROOT}/external"
-
-rsync -a --delete \
-    --delete-excluded \
-    --exclude='.git/' \
-    --exclude='.github/' \
-    --exclude='.travis.yml' \
-    --exclude='INSTALL.md' \
-    --exclude='pvs_studio.sh' \
-    --exclude='build/' \
-    --exclude='build-*/' \
-    --exclude='cmake-build-*/' \
-    --exclude='_build/' \
-    --exclude='examples/' \
-    --exclude='packaging/' \
-    --exclude='test/' \
-    --exclude='utils/' \
-    --exclude='*.o' \
-    --exclude='*.a' \
-    --exclude='*.dylib' \
-    --exclude='*.so' \
-    --exclude='*.dll' \
-    "${SRC}/" "${DST}/"
-
-echo "Synced Lexbor fork:"
-echo "  from: ${SRC}"
-echo "  to:   ${DST}"
-if git -C "${SRC}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    branch="$(git -C "${SRC}" branch --show-current 2>/dev/null || true)"
-    commit="$(git -C "${SRC}" rev-parse --short HEAD)"
-    if [[ -n "${branch}" ]]; then
-        echo "  ref:  ${branch} @ ${commit}"
-    else
-        echo "  ref:  ${commit}"
-    fi
-fi
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FORK="${1:-${AFFINEUI_LEXBOR_FORK:-${ROOT}/../affineui_lexbor}}"
+cd "$ROOT"
+git subtree pull --prefix=external/lexbor "$FORK" affineui --squash
+echo "Pulled affineui_lexbor (branch affineui) into external/lexbor."
