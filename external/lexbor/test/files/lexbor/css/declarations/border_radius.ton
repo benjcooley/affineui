@@ -1,0 +1,20 @@
+[
+    {
+        "data": "border-radius: .25rem",
+        "results": [
+            {"type": "property", "name": "border-radius", "value": "0.25rem", "important": false}
+        ]
+    },
+    {
+        "data": "border-radius: 4px 8px / 2px 6px",
+        "results": [
+            {"type": "property", "name": "border-radius", "value": "4px 8px / 2px 6px", "important": false}
+        ]
+    },
+    {
+        "data": "border-top-left-radius: 50% 25%",
+        "results": [
+            {"type": "property", "name": "border-top-left-radius", "value": "50% 25%", "important": false}
+        ]
+    }
+]

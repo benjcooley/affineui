@@ -1,0 +1,28 @@
+[
+    /* Comment */
+    {
+        "data": $DATA{ ,12}
+            <!-- -->
+        $DATA,
+        "tokens": [
+            {
+                "tag": "!--",
+                "attr": []
+            }
+        ],
+        "errors": []
+    },
+    {
+        "data": $DATA{ ,12}
+            <!------->
+        $DATA,
+        "tokens": [
+            {
+                "tag": "!--",
+                "text": "---",
+                "attr": []
+            }
+        ],
+        "errors": []
+    }
+]
