@@ -68,3 +68,6 @@ __pycache__/
 # Conformance harness (generated snapshots + browser deps)
 conformance/out/
 conformance/browser/node_modules/
+
+# git worktrees created by agents
+.claude/worktrees/
