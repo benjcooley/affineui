@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; color: #212121; }
+  .wrap { padding: 24px; display: flex; gap: 48px; }
+  .col { width: 200px; }
+  .tag { font-size: 11px; color: #888; margin: 0 0 4px; }
+  ul, ol { margin: 0; padding-left: 24px; font-size: 16px; line-height: 1.6; }
+  .square { list-style-type: square; }
+  .none { list-style-type: none; padding-left: 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="col">
+      <p class="tag">ul (disc)</p>
+      <ul><li>Apples</li><li>Oranges</li><li>Pears</li></ul>
+    </div>
+    <div class="col">
+      <p class="tag">ol (decimal)</p>
+      <ol><li>First</li><li>Second</li><li>Third</li></ol>
+    </div>
+    <div class="col">
+      <p class="tag">ul square / none</p>
+      <ul class="square"><li>Square one</li><li>Square two</li></ul>
+      <ul class="none"><li>No marker</li><li>No marker</li></ul>
+    </div>
+  </div>
+</body>
+</html>

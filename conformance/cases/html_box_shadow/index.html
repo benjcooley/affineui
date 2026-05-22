@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; }
+  .grid {
+    padding: 40px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 48px;
+  }
+  .cell { width: 140px; }
+  .cap { font-size: 12px; color: #333; margin: 14px 0 0; text-align: center; }
+  .box { width: 140px; height: 80px; background: #fff; border: 1px solid #e0e0e0; }
+
+  .s-small  { box-shadow: 2px 2px 4px #888; }
+  .s-large  { box-shadow: 0 10px 20px #999; }
+  .s-spread { box-shadow: 0 0 0 6px #90caf9; }
+  .s-inset  { box-shadow: inset 0 0 12px #555; }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="cell"><div class="box s-small"></div><p class="cap">offset blur</p></div>
+    <div class="cell"><div class="box s-large"></div><p class="cap">soft drop</p></div>
+    <div class="cell"><div class="box s-spread"></div><p class="cap">spread ring</p></div>
+    <div class="cell"><div class="box s-inset"></div><p class="cap">inset</p></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; color: #fff; }
+  .wrap { padding: 24px; }
+  .stage {
+    position: relative;
+    width: 360px;
+    height: 240px;
+    background: #eceff1;
+    border: 1px solid #b0bec5;
+  }
+  .box { font-size: 11px; padding: 4px; box-sizing: border-box; }
+  /* static: normal flow at top */
+  .static { position: static; width: 120px; height: 40px; background: #455a64; }
+  /* relative: shifted from its normal position */
+  .relative { position: relative; top: 20px; left: 40px; width: 120px; height: 40px; background: #00695c; }
+  /* absolute: pinned to stage corners */
+  .abs-tr { position: absolute; top: 8px; right: 8px; width: 90px; height: 40px; background: #c62828; }
+  .abs-bl { position: absolute; bottom: 8px; left: 8px; width: 90px; height: 40px; background: #6a1b9a; }
+  /* absolute centered-ish via fixed offsets */
+  .abs-c { position: absolute; top: 100px; left: 130px; width: 100px; height: 50px; background: #1565c0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage">
+      <div class="box static">static</div>
+      <div class="box relative">relative +20/+40</div>
+      <div class="box abs-tr">abs top-right</div>
+      <div class="box abs-bl">abs bottom-left</div>
+      <div class="box abs-c">abs offset</div>
+    </div>
+  </div>
+</body>
+</html>

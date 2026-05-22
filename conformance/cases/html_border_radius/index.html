@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; }
+  .grid {
+    padding: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+  .cell { width: 120px; }
+  .cap { font-size: 12px; color: #333; margin: 6px 0 0; text-align: center; }
+  .box { width: 120px; height: 80px; background: #5e35b1; }
+
+  .r0   { border-radius: 0; }
+  .r8   { border-radius: 8px; }
+  .r20  { border-radius: 20px; }
+  .pill { border-radius: 40px; }
+  .circle { width: 80px; height: 80px; border-radius: 50%; margin: 0 auto; }
+  .mixed { border-radius: 0 30px 0 30px; }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="cell"><div class="box r0"></div><p class="cap">0</p></div>
+    <div class="cell"><div class="box r8"></div><p class="cap">8px</p></div>
+    <div class="cell"><div class="box r20"></div><p class="cap">20px</p></div>
+    <div class="cell"><div class="box pill"></div><p class="cap">40px</p></div>
+    <div class="cell"><div class="box circle"></div><p class="cap">50%</p></div>
+    <div class="cell"><div class="box mixed"></div><p class="cap">2-corner</p></div>
+  </div>
+</body>
+</html>

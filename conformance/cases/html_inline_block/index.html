@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; color: #212121; }
+  .wrap { padding: 24px; }
+  .tag { font-size: 11px; color: #888; margin: 12px 0 4px; }
+
+  /* inline: width/height ignored, flows in line */
+  .inline span { background: #ffcc80; padding: 2px 6px; }
+
+  /* inline-block: respects width/height, sits in text flow */
+  .ib span {
+    display: inline-block;
+    width: 70px; height: 40px;
+    background: #80cbc4;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+
+  /* block: each on its own line, full width */
+  .blk span {
+    display: block;
+    background: #ce93d8;
+    width: 200px;
+    margin-bottom: 4px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="tag">display: inline (flows, no box size)</p>
+    <div class="inline"><span>one</span> <span>two</span> <span>three</span></div>
+
+    <p class="tag">display: inline-block (sized boxes in a line)</p>
+    <div class="ib"><span></span><span></span><span></span></div>
+
+    <p class="tag">display: block (stacked)</p>
+    <div class="blk"><span>A</span><span>B</span><span>C</span></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; color: #212121; }
+  .wrap { padding: 24px; }
+  .tag { font-size: 11px; color: #888; margin: 0 0 6px; }
+  .row { display: flex; gap: 16px; margin: 0 0 24px; }
+  .sw { width: 90px; height: 70px; }
+
+  /* color formats, all the same teal */
+  .hex { background: #009688; }
+  .rgb { background: rgb(0, 150, 136); }
+  .hsl { background: hsl(174, 100%, 29%); }
+
+  /* opacity steps on a solid blue over white */
+  .o100 { background: #1e88e5; opacity: 1.0; }
+  .o066 { background: #1e88e5; opacity: 0.66; }
+  .o033 { background: #1e88e5; opacity: 0.33; }
+
+  /* rgba fill */
+  .rgba { background: rgba(229, 57, 53, 0.5); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <p class="tag">same color via hex / rgb / hsl</p>
+    <div class="row">
+      <div class="sw hex"></div>
+      <div class="sw rgb"></div>
+      <div class="sw hsl"></div>
+    </div>
+    <p class="tag">opacity 1.0 / 0.66 / 0.33 over white</p>
+    <div class="row">
+      <div class="sw o100"></div>
+      <div class="sw o066"></div>
+      <div class="sw o033"></div>
+    </div>
+    <p class="tag">rgba alpha 0.5</p>
+    <div class="row">
+      <div class="sw rgba"></div>
+    </div>
+  </div>
+</body>
+</html>

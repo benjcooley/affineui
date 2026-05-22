@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../_bootstrap/bootstrap.min.css">
+<style>
+  body{margin:0;padding:16px;background:#fff}
+  /* Freeze animations so the snapshot is deterministic across browser/AffineUI */
+  .spinner-border, .spinner-grow { animation: none !important; }
+  /* spinner-grow with no animation collapses to a dot; force visible static disc */
+  .spinner-grow { opacity: 1 !important; transform: none !important; }
+</style>
+</head>
+<body>
+  <h6 class="mb-3">Border spinners</h6>
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-4">
+    <div class="spinner-border text-primary" role="status"></div>
+    <div class="spinner-border text-secondary" role="status"></div>
+    <div class="spinner-border text-success" role="status"></div>
+    <div class="spinner-border text-danger" role="status"></div>
+    <div class="spinner-border text-warning" role="status"></div>
+    <div class="spinner-border text-info" role="status"></div>
+    <div class="spinner-border text-dark" role="status"></div>
+    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+  </div>
+
+  <h6 class="mb-3">Grow spinners</h6>
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-4">
+    <div class="spinner-grow text-primary" role="status"></div>
+    <div class="spinner-grow text-secondary" role="status"></div>
+    <div class="spinner-grow text-success" role="status"></div>
+    <div class="spinner-grow text-danger" role="status"></div>
+    <div class="spinner-grow text-warning" role="status"></div>
+    <div class="spinner-grow text-info" role="status"></div>
+    <div class="spinner-grow text-dark" role="status"></div>
+    <div class="spinner-grow spinner-grow-sm text-primary" role="status"></div>
+  </div>
+
+  <div class="d-flex flex-wrap gap-2">
+    <button class="btn btn-primary" type="button" disabled>
+      <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+      Loading...
+    </button>
+    <button class="btn btn-success" type="button" disabled>
+      <span class="spinner-grow spinner-grow-sm" role="status" aria-hidden="true"></span>
+      Loading...
+    </button>
+  </div>
+</body>
+</html>

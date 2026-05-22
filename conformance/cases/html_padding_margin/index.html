@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; }
+  .wrap { padding: 24px; }
+  /* outer shows the margin gap (its own bg), inner shows padding gap */
+  .outer { background: #ffe0b2; width: 260px; margin: 0 0 24px; }
+  .pad {
+    background: #fb8c00;
+    padding: 24px 12px 24px 36px; /* T R B L distinct */
+  }
+  .pad .core { background: #4e342e; height: 30px; }
+
+  .m-outer { background: #c5cae9; width: 320px; height: 140px; }
+  .m-box {
+    background: #3949ab;
+    width: 100px; height: 50px;
+    margin: 20px 40px; /* vertical 20, horizontal 40 */
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="outer">
+      <div class="pad"><div class="core"></div></div>
+    </div>
+    <div class="m-outer">
+      <div class="m-box"></div>
+    </div>
+  </div>
+</body>
+</html>

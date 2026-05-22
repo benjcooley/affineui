@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; color: #212121; }
+  .wrap { padding: 16px; display: flex; gap: 20px; flex-wrap: wrap; }
+  .cell { width: 200px; }
+  .tag { font-size: 11px; color: #888; margin: 0 0 2px; }
+  .row {
+    display: flex;
+    width: 200px;
+    height: 110px;
+    background: #eceff1;
+    gap: 10px;
+  }
+  .row > div { width: 40px; background: #6a1b9a; }
+  .a-start   { align-items: flex-start; }
+  .a-center  { align-items: center; }
+  .a-end     { align-items: flex-end; }
+  .a-stretch { align-items: stretch; }
+  /* differing heights to show alignment except stretch */
+  .h1 { height: 40px; }
+  .h2 { height: 70px; }
+  .h3 { height: 55px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="cell">
+      <p class="tag">align-items: flex-start</p>
+      <div class="row a-start"><div class="h1"></div><div class="h2"></div><div class="h3"></div></div>
+    </div>
+    <div class="cell">
+      <p class="tag">align-items: center</p>
+      <div class="row a-center"><div class="h1"></div><div class="h2"></div><div class="h3"></div></div>
+    </div>
+    <div class="cell">
+      <p class="tag">align-items: flex-end</p>
+      <div class="row a-end"><div class="h1"></div><div class="h2"></div><div class="h3"></div></div>
+    </div>
+    <div class="cell">
+      <p class="tag">align-items: stretch</p>
+      <div class="row a-stretch"><div></div><div></div><div></div></div>
+    </div>
+  </div>
+</body>
+</html>

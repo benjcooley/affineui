@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; color: #212121; }
+  .wrap { padding: 24px; display: flex; gap: 32px; }
+  .cell { width: 160px; }
+  .tag { font-size: 11px; color: #888; margin: 0 0 4px; }
+  .box {
+    width: 140px;
+    height: 90px;
+    border: 2px solid #607d8b;
+    background: #eceff1;
+  }
+  .tall { width: 220px; height: 160px; background: #ffe082; }
+  .visible { overflow: visible; }
+  .hidden  { overflow: hidden; }
+  .scroll  { overflow: scroll; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="cell">
+      <p class="tag">overflow: visible</p>
+      <div class="box visible"><div class="tall"></div></div>
+    </div>
+    <div class="cell">
+      <p class="tag">overflow: hidden</p>
+      <div class="box hidden"><div class="tall"></div></div>
+    </div>
+    <div class="cell">
+      <p class="tag">overflow: scroll</p>
+      <div class="box scroll"><div class="tall"></div></div>
+    </div>
+  </div>
+</body>
+</html>

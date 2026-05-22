@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #fff; font-family: sans-serif; }
+  .grid {
+    padding: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+  .cell { width: 120px; }
+  .cap { font-size: 12px; color: #333; margin: 6px 0 0; text-align: center; }
+  .box { width: 120px; height: 70px; background: #eceff1; box-sizing: border-box; }
+
+  .solid  { border: 6px solid #c62828; }
+  .dashed { border: 6px dashed #ad1457; }
+  .dotted { border: 6px dotted #6a1b9a; }
+  .double { border: 8px double #283593; }
+  .mixed  {
+    border-top: 6px solid #00695c;
+    border-right: 6px solid #2e7d32;
+    border-bottom: 6px solid #f9a825;
+    border-left: 6px solid #ef6c00;
+  }
+  .thin   { border: 1px solid #212121; }
+</style>
+</head>
+<body>
+  <div class="grid">
+    <div class="cell"><div class="box solid"></div><p class="cap">solid</p></div>
+    <div class="cell"><div class="box dashed"></div><p class="cap">dashed</p></div>
+    <div class="cell"><div class="box dotted"></div><p class="cap">dotted</p></div>
+    <div class="cell"><div class="box double"></div><p class="cap">double</p></div>
+    <div class="cell"><div class="box mixed"></div><p class="cap">4 colors</p></div>
+    <div class="cell"><div class="box thin"></div><p class="cap">1px</p></div>
+  </div>
+</body>
+</html>
