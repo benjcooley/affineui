@@ -1,0 +1,39 @@
+[
+    {
+        "data": "border-color: #fff",
+        "results": [
+            {"type": "property", "name": "border-color", "value": "#fff #fff #fff #fff", "important": false}
+        ]
+    },
+    {
+        "data": "border-color: #fff #000 transparent currentcolor",
+        "results": [
+            {"type": "property", "name": "border-color", "value": "#fff #000 transparent currentcolor", "important": false}
+        ]
+    },
+    {
+        "data": "background: #fff url(example.png) right center / 8px 10px no-repeat",
+        "results": [
+            {"type": "property", "name": "background", "value": "#fff", "important": false}
+        ]
+    },
+    {
+        "data": "gap: 1.25rem",
+        "results": [
+            {"type": "property", "name": "gap", "value": "1.25rem", "important": false}
+        ]
+    },
+    {
+        "data": "gap: 4px 8px",
+        "results": [
+            {"type": "property", "name": "gap", "value": "4px 8px", "important": false}
+        ]
+    },
+    {
+        "data": "row-gap: normal; column-gap: 2rem",
+        "results": [
+            {"type": "property", "name": "row-gap", "value": "normal", "important": false},
+            {"type": "property", "name": "column-gap", "value": "2rem", "important": false}
+        ]
+    }
+]
