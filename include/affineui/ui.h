@@ -24,6 +24,7 @@
 // thread that owns your graphics context.
 
 #include "affineui/document.h"
+#include "affineui/embed.h"
 #include "affineui/renderer.h"
 #include "affineui/types.h"
 
@@ -60,6 +61,17 @@ public:
     /// relative to the HTML file's directory.
     bool load(std::string_view path);
 
+    // ── Embedding (host-owned GPU) ──────────────────────────────────
+
+    /// Initialize for embedded mode against the host's graphics objects.
+    /// Pass an InitDesc whose `gpu` points at a complete GpuContext for
+    /// your backend; AffineUI brings up sokol_gfx on those objects (it
+    /// does NOT create a window or swapchain). Call once before the first
+    /// render(FrameTarget). With `gpu == nullptr` this only applies the
+    /// non-GPU settings (fonts, resource loader) and leaves GPU init to
+    /// the lazy path used by the windowing adapters.
+    void init(const InitDesc& desc);
+
     // ── Rendering ───────────────────────────────────────────────────
 
     /// Render one frame of the document into the current framebuffer.
@@ -69,7 +81,16 @@ public:
     ///
     /// First call lazily initializes GPU resources against the
     /// currently bound graphics context — no explicit init needed.
+    /// Use this from the sokol_app / SDL adapters, which open the pass
+    /// for you.
     void render(int fb_w, int fb_h, float dpi_scale);
+
+    /// Render one frame into host-provided render-target views (embedded
+    /// mode). AffineUI opens its own sokol_gfx pass into `target`, draws
+    /// the document, and ends+commits — it does NOT present. The host
+    /// owns the views and the flip. Requires a prior init() with a
+    /// GpuContext. See the state contract in embed.h.
+    void render(const FrameTarget& target);
 
     // ── Immediate mode ──────────────────────────────────────────────
 

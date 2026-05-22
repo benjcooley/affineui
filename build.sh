@@ -27,7 +27,7 @@ SMOKE="${ROOT}/build/smoke"
 
 # Primary example (what `run` launches with no name) + the full set.
 PRIMARY="hello"
-EXAMPLES=(hello bootstrap hello_sdl media imm_counter imm_todo text_flow forms_focus bootstrap_kitchen)
+EXAMPLES=(hello bootstrap hello_sdl media imm_counter imm_todo text_flow forms_focus bootstrap_kitchen embed_d3d11)
 
 py()    { command -v python3 || command -v python; }
 

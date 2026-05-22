@@ -139,6 +139,20 @@ void Ui::invalidate() {
     impl_->document.invalidate_imm();
 }
 
+// ── Embedding (host-owned GPU) ───────────────────────────────────────
+
+void Ui::init(const InitDesc& desc) {
+    if (desc.resource_loader) {
+        impl_->document.set_resource_loader(desc.resource_loader);
+    }
+    // default_font_family / default_font_size are reserved for a future
+    // font-config hook; the embedded default (Roboto) is registered when
+    // the renderer brings NanoVG up.
+    if (desc.gpu) {
+        impl_->renderer.init_embedded(*desc.gpu);
+    }
+}
+
 // ── Rendering ───────────────────────────────────────────────────────
 
 void Ui::render(int fb_w, int fb_h, float dpi_scale) {
@@ -147,6 +161,11 @@ void Ui::render(int fb_w, int fb_h, float dpi_scale) {
     // inside tick_imm so layout/paint see the new tree.
     impl_->document.tick_imm();
     impl_->renderer.render(impl_->document, fb_w, fb_h, dpi_scale);
+}
+
+void Ui::render(const FrameTarget& target) {
+    impl_->document.tick_imm();
+    impl_->renderer.render_to(impl_->document, target);
 }
 
 // ── Input ───────────────────────────────────────────────────────────

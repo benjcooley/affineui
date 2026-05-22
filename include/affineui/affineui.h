@@ -20,6 +20,7 @@
 
 #include "affineui/app.h"
 #include "affineui/document.h"
+#include "affineui/embed.h"
 #include "affineui/painter.h"
 #include "affineui/renderer.h"
 #include "affineui/themes.h"
@@ -29,6 +30,10 @@
 
 #ifndef AFFINEUI_NO_IMM
 #    include "affineui/imm.h"
+#endif
+
+#ifndef AFFINEUI_NO_C_API
+#    include "affineui/c_api.h"
 #endif
 
 // Windowing-toolkit adapters — opt-in via macros. Each pulls in the

@@ -26,6 +26,7 @@
 //   Single-threaded. Construct, render, and destroy on the same
 //   thread — same one that owns your graphics context.
 
+#include "affineui/embed.h"
 #include "affineui/types.h"
 
 #include <memory>
@@ -57,6 +58,19 @@ public:
     /// at a known time (e.g. during a loading screen) rather than on
     /// the first frame.
     void init_gl();
+
+    /// Embedded mode: bring up sokol_gfx on the host's graphics objects
+    /// (sg_setup against `gpu`), then create NanoVG resources. AffineUI
+    /// then owns the sokol_gfx instance and tears it down in shutdown().
+    /// The host keeps ownership of the device objects themselves.
+    /// Throws/aborts only via the logger; on failure ready() stays false.
+    void init_embedded(const GpuContext& gpu);
+
+    /// Embedded mode: render `doc` into the host's per-frame render-target
+    /// views. Opens a sokol_gfx pass into `target` (clearing to
+    /// clear_color when target.clear is set), draws, then ends + commits.
+    /// Does not present. Requires a prior init_embedded().
+    void render_to(Document& doc, const FrameTarget& target);
 
     /// Release all GPU resources. Must be called while the graphics
     /// context that created them is still current — usually right
