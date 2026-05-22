@@ -1,27 +1,30 @@
 // conformance_test — headless AffineUI side of the conformance harness.
 //
-// Loads a named test's HTML, replays an ordered list of interaction steps
-// (click / hover / wait / snapshot), and writes a PPM image at each
-// `snapshot` marker. The browser side (conformance/browser) replays the
-// SAME steps; the runner (conformance/run.py) pixel-diffs each pair.
+// Loads a named test (--test <name> => <cases-dir>/<name>/{index.html,case.json}),
+// replays the case's interaction script, and writes a PPM at each `snapshot`
+// marker. The browser side (conformance/browser) loads the SAME case.json and
+// replays it via Playwright; the runner (conformance/run.py) pixel-diffs each
+// pair.
 //
 //   conformance_test --test <name> [--cases-dir DIR] [--out-dir DIR]
 //                    [--width W] [--height H] [--dpi S]
-//                    [--click X Y | --hover X Y | --wait MS | --snapshot NAME]...
 //
-// With no --snapshot step, one snapshot named "default" is taken at the end.
+// Step vocabulary (case.json "steps", an ordered list) is intentionally small +
+// extensible — agents add new step types (named DOM interactions, keys, etc.)
+// to this dispatch and the browser's as they go. Unknown step types are
+// skipped, so a newer script degrades gracefully on an older tool. Starter set:
+//   {"click":[x,y]} {"hover":[x,y]} {"wait_ms":N} {"snapshot":"name"}
 // Coordinates are CSS pixels (== device px at dpi 1), matching the browser.
-//
-// PPM keeps this tool dependency-free; the Python harness reads PPM + PNG.
 
 #include <affineui/affineui.h>
+
+#include "json.h"
 
 #include <windows.h>
 #include <d3d11.h>
 
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -31,15 +34,14 @@ namespace {
 
 struct Step {
     enum Kind { Click, Hover, Wait, Snapshot } kind;
-    int x = 0, y = 0;       // Click/Hover
-    int ms = 0;             // Wait
-    std::string name;       // Snapshot
+    int x = 0, y = 0, ms = 0;
+    std::string name;
 };
 
 struct Args {
-    std::string test, cases_dir = "conformance/cases", out_dir = ".", html;
-    int   width = 1024, height = 768;
-    float dpi = 1.0f;
+    std::string test, cases_dir = "conformance/cases", out_dir = ".", html, script;
+    int   width = 0, height = 0;     // 0 => take from case.json, else 1024/768
+    float dpi   = 0.0f;             // 0 => take from case.json, else 1.0
     std::vector<Step> steps;
 };
 
@@ -47,27 +49,59 @@ bool parse_args(int argc, char** argv, Args& a) {
     for (int i = 1; i < argc; ++i) {
         std::string s = argv[i];
         auto sval = [&]() -> std::string { return (i + 1 < argc) ? argv[++i] : std::string(); };
-        auto ival = [&]() -> int { return (i + 1 < argc) ? std::atoi(argv[++i]) : 0; };
         if      (s == "--test")      a.test = sval();
         else if (s == "--cases-dir") a.cases_dir = sval();
         else if (s == "--out-dir")   a.out_dir = sval();
         else if (s == "--html")      a.html = sval();
-        else if (s == "--width")     a.width = ival();
-        else if (s == "--height")    a.height = ival();
+        else if (s == "--script")    a.script = sval();
+        else if (s == "--width")     a.width = std::atoi(sval().c_str());
+        else if (s == "--height")    a.height = std::atoi(sval().c_str());
         else if (s == "--dpi")       a.dpi = (float)std::atof(sval().c_str());
-        else if (s == "--click")     { Step st{Step::Click};  st.x = ival(); st.y = ival(); a.steps.push_back(st); }
-        else if (s == "--hover")     { Step st{Step::Hover};  st.x = ival(); st.y = ival(); a.steps.push_back(st); }
-        else if (s == "--wait")      { Step st{Step::Wait};   st.ms = ival();               a.steps.push_back(st); }
-        else if (s == "--snapshot")  { Step st{Step::Snapshot}; st.name = sval();           a.steps.push_back(st); }
         else { std::fprintf(stderr, "unknown option %s\n", s.c_str()); return false; }
     }
     if (a.test.empty() && a.html.empty()) {
-        std::fprintf(stderr, "usage: conformance_test --test <name> [--cases-dir DIR] [--out-dir DIR]\n"
-                             "       [--width W] [--height H] [--dpi S] [steps...]\n");
+        std::fprintf(stderr, "usage: conformance_test --test <name> [--cases-dir DIR] [--out-dir DIR] [--width W] [--height H] [--dpi S]\n");
         return false;
     }
-    if (a.html.empty()) a.html = a.cases_dir + "/" + a.test + "/index.html";
-    if (a.test.empty()) a.test = "test";
+    if (a.html.empty())   a.html   = a.cases_dir + "/" + a.test + "/index.html";
+    if (a.script.empty()) a.script = a.cases_dir + "/" + a.test + "/case.json";
+    if (a.test.empty())   a.test   = "test";
+    return true;
+}
+
+std::string read_file(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return {};
+    std::fseek(f, 0, SEEK_END); long n = std::ftell(f); std::fseek(f, 0, SEEK_SET);
+    std::string s((size_t)(n > 0 ? n : 0), '\0');
+    if (n > 0) { size_t got = std::fread(&s[0], 1, (size_t)n, f); s.resize(got); }
+    std::fclose(f);
+    return s;
+}
+
+// Load the test script (case.json): fills width/height/dpi (when unset) and the
+// step list. Returns false only on a malformed file (missing is fine).
+bool load_case(Args& a) {
+    const std::string text = read_file(a.script);
+    if (text.empty()) return true;  // no case.json => static default snapshot
+    cjson::Value root;
+    if (!cjson::parse(text, root) || root.type != cjson::Value::Obj) {
+        std::fprintf(stderr, "warning: malformed %s; ignoring\n", a.script.c_str());
+        return true;
+    }
+    if (a.width  == 0)   if (auto* v = root.find("width"))  a.width  = (int)v->as_num(0);
+    if (a.height == 0)   if (auto* v = root.find("height")) a.height = (int)v->as_num(0);
+    if (a.dpi    == 0.f) if (auto* v = root.find("dpi"))    a.dpi    = (float)v->as_num(0);
+
+    if (const cjson::Value* steps = root.find("steps"); steps && steps->type == cjson::Value::Arr) {
+        for (const cjson::Value& s : *steps->arr) {
+            if (const cjson::Value* c = s.find("click"))    { a.steps.push_back({Step::Click, c->at_int(0), c->at_int(1)}); }
+            else if (const cjson::Value* h = s.find("hover")) { a.steps.push_back({Step::Hover, h->at_int(0), h->at_int(1)}); }
+            else if (const cjson::Value* w = s.find("wait_ms")) { Step st{Step::Wait}; st.ms = (int)w->as_num(); a.steps.push_back(st); }
+            else if (const cjson::Value* n = s.find("snapshot")) { Step st{Step::Snapshot}; st.name = n->as_str(); a.steps.push_back(st); }
+            // else: unknown step type — skip (agents add new types to both drivers).
+        }
+    }
     return true;
 }
 
@@ -87,6 +121,10 @@ bool write_ppm(const std::string& path, const uint8_t* rgb, int w, int h) {
 int main(int argc, char** argv) {
     Args args;
     if (!parse_args(argc, argv, args)) return 2;
+    if (!load_case(args)) return 2;
+    if (args.width  <= 0) args.width  = 1024;
+    if (args.height <= 0) args.height = 768;
+    if (args.dpi    <= 0) args.dpi    = 1.0f;
     const int W = args.width, H = args.height;
 
     // ── Headless D3D11 device + offscreen targets ────────────────────
@@ -158,7 +196,6 @@ int main(int argc, char** argv) {
         if (ok) std::fprintf(stderr, "wrote %s\n", path.c_str());
         return ok;
     };
-
     auto click = [&](int x, int y) {
         affineui::Event e; e.pos = {x, y}; e.button = affineui::MouseButton::Left;
         e.type = affineui::EventType::MouseMove; ui.dispatch(e);

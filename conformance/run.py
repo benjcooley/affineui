@@ -51,39 +51,33 @@ def snapshot_names(steps: list[dict]) -> list[str]:
     return names or ["default"]
 
 
-def tool_step_flags(steps: list[dict]) -> list[str]:
-    """Translate the JSON step list into conformance_test CLI flags."""
-    flags: list[str] = []
-    for s in steps:
-        if "click" in s:        flags += ["--click", str(s["click"][0]), str(s["click"][1])]
-        elif "hover" in s:      flags += ["--hover", str(s["hover"][0]), str(s["hover"][1])]
-        elif "wait_ms" in s:    flags += ["--wait", str(s["wait_ms"])]
-        elif "snapshot" in s:   flags += ["--snapshot", str(s["snapshot"])]
-    return flags
-
-
 def run_test(name: str, tool: Path, channel: str) -> list[dict]:
-    case_dir = CASES / name
-    cfg = load_case(case_dir)
-    html = case_dir / "index.html"
+    # Both drivers self-load <cases>/<name>/case.json; the runner only needs it
+    # for the snapshot names + diff config (tolerance/threshold).
+    cfg = load_case(CASES / name)
     snaps = snapshot_names(cfg["steps"])
     OUT.mkdir(parents=True, exist_ok=True)
 
-    # AffineUI side.
-    subprocess.run(
-        [str(tool), "--test", name, "--cases-dir", str(CASES), "--out-dir", str(OUT),
-         "--width", str(cfg["width"]), "--height", str(cfg["height"]), "--dpi", str(cfg["dpi"])]
-        + tool_step_flags(cfg["steps"]),
-        check=True)
+    # AffineUI side (loads case.json itself).
+    def err_rows(reason: str) -> list[dict]:
+        print(f"[ERROR] {name}: {reason}")
+        return [{"test": name, "snapshot": s, "passed": False, "pct": 100.0,
+                 "mean": 0.0, "max": 0, "threshold": cfg["threshold"], "error": reason,
+                 "browser": "", "affineui": "", "diff": ""} for s in snaps]
 
-    # Browser side.
-    subprocess.run(
-        ["node", str(ROOT / "browser" / "shot.js"), "--html", str(html),
-         "--out-dir", str(OUT), "--name", name,
-         "--width", str(cfg["width"]), "--height", str(cfg["height"]),
-         "--dpi", str(cfg["dpi"]), "--channel", channel,
-         "--steps", json.dumps(cfg["steps"])],
-        check=True, shell=False)
+    # Either driver may crash on a not-yet-supported feature — capture it as a
+    # failure and keep going so one bad test never aborts the suite.
+    try:
+        subprocess.run([str(tool), "--test", name, "--cases-dir", str(CASES), "--out-dir", str(OUT)],
+                       check=True, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return err_rows(f"AffineUI render failed: {e}")
+    try:
+        subprocess.run(["node", str(ROOT / "browser" / "shot.js"), "--test", name,
+                        "--cases-dir", str(CASES), "--out-dir", str(OUT), "--channel", channel],
+                       check=True, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return err_rows(f"browser render failed: {e}")
 
     results = []
     for snap in snaps:
@@ -91,13 +85,16 @@ def run_test(name: str, tool: Path, channel: str) -> list[dict]:
         aff_png = OUT / f"{name}.affineui.{snap}.png"
         br_png  = OUT / f"{name}.browser.{snap}.png"
         diff_png = OUT / f"{name}.diff.{snap}.png"
+        if not aff_ppm.exists() or not br_png.exists():
+            results += err_rows(f"missing snapshot '{snap}'")[: 1]
+            continue
         Image.open(aff_ppm).save(aff_png)               # for the HTML report
         r = diff_images(br_png, aff_ppm, diff_png, cfg["tolerance"])
         passed = r.size_matched and r.pct_changed <= cfg["threshold"]
         results.append({
             "test": name, "snapshot": snap, "passed": passed,
             "pct": r.pct_changed, "mean": r.mean_delta, "max": r.max_delta,
-            "threshold": cfg["threshold"],
+            "threshold": cfg["threshold"], "error": "",
             "browser": br_png.name, "affineui": aff_png.name, "diff": diff_png.name,
         })
         flag = "PASS" if passed else "FAIL"
@@ -111,10 +108,13 @@ def write_report(rows: list[dict]) -> Path:
     trs = []
     for r in rows:
         color = "#1e8e3e" if r["passed"] else "#d93025"
+        err = r.get("error") or ""
+        status = "PASS" if r["passed"] else ("ERROR" if err else "FAIL")
+        meta = (f'{r["pct"]:.2f}% Δ<br>mean {r["mean"]:.1f}<br>max {r["max"]}'
+                if not err else f'<i>{err}</i>')
         trs.append(
             f'<tr><td><b>{r["test"]}</b><br>{r["snapshot"]}<br>'
-            f'<span style="color:{color}">{"PASS" if r["passed"] else "FAIL"}</span><br>'
-            f'{r["pct"]:.2f}% Δ<br>mean {r["mean"]:.1f}<br>max {r["max"]}</td>'
+            f'<span style="color:{color}">{status}</span><br>{meta}</td>'
             f'{cell(r["browser"])}{cell(r["affineui"])}{cell(r["diff"])}</tr>')
     html = ("<!doctype html><meta charset=utf-8><title>AffineUI conformance</title>"
             "<style>body{font-family:sans-serif;background:#111;color:#ddd}"
@@ -147,7 +147,13 @@ def main() -> int:
 
     rows: list[dict] = []
     for n in names:
-        rows += run_test(n, tool, args.channel)
+        try:
+            rows += run_test(n, tool, args.channel)
+        except Exception as e:                       # never let one test abort the suite
+            print(f"[ERROR] {n}: {e}")
+            rows.append({"test": n, "snapshot": "-", "passed": False, "pct": 100.0,
+                         "mean": 0.0, "max": 0, "threshold": 0, "error": str(e),
+                         "browser": "", "affineui": "", "diff": ""})
     report = write_report(rows)
 
     failed = [r for r in rows if not r["passed"]]

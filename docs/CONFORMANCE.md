@@ -35,16 +35,25 @@ A directory `conformance/cases/<name>/` with `index.html` and an optional
 ```
 
 **Steps** are an ordered list of **actions** (`click [x,y]`, `hover [x,y]`,
-`wait_ms`) and **`snapshot` markers**. Both sides replay the identical list
-and emit one image per marker (`<test>.<driver>.<snapshot>`); the runner
-diffs each pair. No marker ⇒ one snapshot named `default`.
+`wait_ms`) and **`snapshot` markers**. **Both drivers self-load `case.json`**
+(given `--test <name>`) and replay the identical list, emitting one image per
+marker (`<test>.<driver>.<snapshot>`); the runner just orchestrates + diffs.
+No marker ⇒ one snapshot named `default`.
 
 Coordinates are **CSS pixels** so the browser and AffineUI act on the same
 point. Interaction is driven by **synthetic input**: AffineUI dispatches
 `MouseMove/Down/Up`; the browser uses Playwright's `page.mouse` (the standard
-Chrome DevTools Protocol `Input.*` path). *(Selector-based steps could be
-added once AffineUI exposes element bounds; coordinates are the parity
-common-denominator today.)*
+Chrome DevTools Protocol `Input.*` path).
+
+### Extending the step vocabulary
+The step set is intentionally **small and extensible** — we don't need every
+interaction type up front; **agents add new ones as they go**. To add a step
+type (named DOM interactions like `click "#id"`, `key`, `type`, `scroll`, …),
+extend the dispatch in **both** `tools/conformance/main.cpp` (synthetic
+`Ui::dispatch`) and `conformance/browser/shot.js` (Playwright). Unknown step
+types are **skipped**, so a newer script degrades gracefully on an older
+driver. *(Named/selector steps need AffineUI to expose element bounds /
+hit-test; coordinates are the parity common-denominator today.)*
 
 ## Running
 
