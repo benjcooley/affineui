@@ -92,6 +92,25 @@ public:
     /// GpuContext. See the state contract in embed.h.
     void render(const FrameTarget& target);
 
+    // ── Update scheduling ───────────────────────────────────────────
+
+    /// Whether the UI changed since the last render and should be
+    /// repainted. A host that renders on demand can skip render() when
+    /// this is false. (Advisory; render() is always safe to call.)
+    /// NOTE: animation-driven dirtiness is a TODO — until then a host
+    /// running CSS animations should render every frame.
+    bool needs_update() const;
+
+    /// Force needs_update() true — call when host-side state the UI
+    /// depends on changed outside AffineUI's knowledge.
+    void mark_dirty();
+
+    /// Drop all content state (DOM, user CSS, click handlers, imm view)
+    /// and return to a clean, reusable state, keeping the GPU/device
+    /// binding so the Ui can be refilled without re-init. TODO: also
+    /// release cached GPU resources / asset cache once those exist.
+    void reset();
+
     // ── Immediate mode ──────────────────────────────────────────────
 
     /// Install an immediate-mode view function. The function is

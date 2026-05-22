@@ -62,9 +62,10 @@ public:
     /// Embedded mode: bring up sokol_gfx on the host's graphics objects
     /// (sg_setup against `gpu`), then create NanoVG resources. AffineUI
     /// then owns the sokol_gfx instance and tears it down in shutdown().
-    /// The host keeps ownership of the device objects themselves.
+    /// The host keeps ownership of the device objects themselves. When
+    /// `allocator` is non-null, sokol_gfx allocates through it.
     /// Throws/aborts only via the logger; on failure ready() stays false.
-    void init_embedded(const GpuContext& gpu);
+    void init_embedded(const GpuContext& gpu, const Allocator* allocator = nullptr);
 
     /// Embedded mode: render `doc` into the host's per-frame render-target
     /// views. Opens a sokol_gfx pass into `target` (clearing to

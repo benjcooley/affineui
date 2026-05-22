@@ -195,12 +195,24 @@ int main() {
         }
         if (g_quit) break;
 
+        // Host owns the frame: clear the whole backbuffer ourselves (the
+        // "scene"), then draw the UI as a centered sub-rect panel over it —
+        // demonstrates FrameTarget::viewport + draw-over compositing.
+        const float bg[4] = {0.10f, 0.18f, 0.22f, 1.0f};
+        g_context->OMSetRenderTargets(1, &g_rtv, g_dsv);
+        g_context->ClearRenderTargetView(g_rtv, bg);
+
+        const int margin = 80;
         affineui::FrameTarget target{};
         target.width                  = g_width;
         target.height                 = g_height;
         target.dpi_scale              = 1.0f;
         target.sample_count           = 1;
-        target.clear                  = true;
+        target.clear                  = false;  // draw over the host's scene
+        target.viewport.x             = margin;
+        target.viewport.y             = margin;
+        target.viewport.w             = g_width  - 2 * margin;
+        target.viewport.h             = g_height - 2 * margin;
         target.d3d11.render_view        = g_rtv;
         target.d3d11.depth_stencil_view = g_dsv;
 

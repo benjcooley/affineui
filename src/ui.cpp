@@ -15,6 +15,8 @@
 
 #include "affineui/ui.h"
 
+#include "internal/embed_log.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -74,11 +76,39 @@ struct UiImpl {
     Document document;
     Renderer renderer;
 
+    // Advisory "needs repaint" flag (see Ui::needs_update). Starts true so
+    // the first frame always paints. TODO(embed §5): keep true while a CSS
+    // animation is in flight so an on-demand host renders until it settles.
+    bool dirty{true};
+
     // Click handlers, in insertion order. A single click can fire
     // multiple handlers if multiple selectors match (mirrors DOM
     // event bubbling intuitively at the registration site).
     std::vector<std::pair<std::string, std::function<void()>>> click_handlers;
 };
+
+// ── Internal log sink (embed_log.h) ─────────────────────────────────
+namespace {
+LogFn g_log_fn   = nullptr;
+void* g_log_user = nullptr;
+}  // namespace
+
+void set_log_sink(LogFn fn, void* user) noexcept {
+    g_log_fn   = fn;
+    g_log_user = user;
+}
+
+void log_msg(LogLevel level, const char* msg) noexcept {
+    if (g_log_fn) {
+        g_log_fn(level, msg ? msg : "", g_log_user);
+        return;
+    }
+#ifndef NDEBUG
+    std::fprintf(stderr, "%s\n", msg ? msg : "");
+#else
+    (void)level; (void)msg;
+#endif
+}
 
 }  // namespace detail
 
@@ -91,10 +121,12 @@ Ui& Ui::operator=(Ui&&) noexcept = default;
 
 void Ui::html(std::string_view source) {
     impl_->document.set_html(source);
+    impl_->dirty = true;
 }
 
 void Ui::css(std::string_view source) {
     impl_->document.set_user_stylesheet(source);
+    impl_->dirty = true;
 }
 
 bool Ui::load(std::string_view path) {
@@ -133,15 +165,20 @@ bool Ui::load(std::string_view path) {
 
 void Ui::mount(std::function<void()> view_fn) {
     impl_->document.set_imm_view(std::move(view_fn));
+    impl_->dirty = true;
 }
 
 void Ui::invalidate() {
     impl_->document.invalidate_imm();
+    impl_->dirty = true;
 }
 
 // ── Embedding (host-owned GPU) ───────────────────────────────────────
 
 void Ui::init(const InitDesc& desc) {
+    if (desc.log) {
+        detail::set_log_sink(desc.log, desc.log_user);
+    }
     if (desc.resource_loader) {
         impl_->document.set_resource_loader(desc.resource_loader);
     }
@@ -149,8 +186,9 @@ void Ui::init(const InitDesc& desc) {
     // font-config hook; the embedded default (Roboto) is registered when
     // the renderer brings NanoVG up.
     if (desc.gpu) {
-        impl_->renderer.init_embedded(*desc.gpu);
+        impl_->renderer.init_embedded(*desc.gpu, desc.allocator);
     }
+    impl_->dirty = true;
 }
 
 // ── Rendering ───────────────────────────────────────────────────────
@@ -161,18 +199,42 @@ void Ui::render(int fb_w, int fb_h, float dpi_scale) {
     // inside tick_imm so layout/paint see the new tree.
     impl_->document.tick_imm();
     impl_->renderer.render(impl_->document, fb_w, fb_h, dpi_scale);
+    impl_->dirty = false;
 }
 
 void Ui::render(const FrameTarget& target) {
     impl_->document.tick_imm();
     impl_->renderer.render_to(impl_->document, target);
+    impl_->dirty = false;
+}
+
+// ── Update scheduling ───────────────────────────────────────────────
+
+bool Ui::needs_update() const {
+    return impl_->dirty || impl_->document.imm_dirty();
+}
+
+void Ui::mark_dirty() {
+    impl_->dirty = true;
+}
+
+void Ui::reset() {
+    impl_->document.set_imm_view({});         // drop imm view
+    impl_->document.set_user_stylesheet("");  // clear user CSS
+    impl_->document.set_html("");             // clear DOM
+    impl_->click_handlers.clear();
+    impl_->dirty = true;
+    // TODO(embed §7): also release cached GPU resources + the asset cache
+    // once those subsystems exist.
 }
 
 // ── Input ───────────────────────────────────────────────────────────
 
 bool Ui::dispatch(const Event& e) {
     const auto result = impl_->document.dispatch(e);
-    (void)result;  // currently we don't distinguish redraw vs consumed
+    if (result.redraw_requested || result.invalidate_view) {
+        impl_->dirty = true;  // a hover/focus/state change needs a repaint
+    }
 
     // Click routing: on MouseUp, check (1) user-registered selectors
     // via on_click, then (2) imm-mode handlers for elements stamped
@@ -211,7 +273,7 @@ void Ui::on_click(std::string_view selector, std::function<void()> cb) {
 
 // ── Config ──────────────────────────────────────────────────────────
 
-void  Ui::set_clear_color(Color c)  { impl_->renderer.set_clear_color(c); }
+void  Ui::set_clear_color(Color c)  { impl_->renderer.set_clear_color(c); impl_->dirty = true; }
 Color Ui::clear_color() const       { return impl_->renderer.clear_color(); }
 
 // ── Access ──────────────────────────────────────────────────────────

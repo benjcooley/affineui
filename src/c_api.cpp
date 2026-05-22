@@ -34,6 +34,17 @@ affineui::PixelFormat to_cpp_format(int f) {
     }
 }
 
+// The C log callback can't bind directly to the C++ LogFn (enum types
+// differ), so stash it and route through a static thunk.
+affineui_log_fn g_c_log      = nullptr;
+void*           g_c_log_user = nullptr;
+
+void cpp_log_thunk(affineui::LogLevel level, const char* msg, void* /*user*/) {
+    if (g_c_log) {
+        g_c_log(static_cast<affineui_log_level>(static_cast<int>(level)), msg, g_c_log_user);
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -68,10 +79,20 @@ void affineui_ui_init(affineui_ui* ui, const affineui_init_desc* desc) {
         gpu.sample_count           = g.sample_count > 0 ? g.sample_count : 1;
         init.gpu = &gpu;
     }
+    // affineui_allocator and affineui::Allocator are layout-compatible POD;
+    // init() copies it synchronously so the borrow is safe.
+    if (desc->allocator) {
+        init.allocator = reinterpret_cast<const affineui::Allocator*>(desc->allocator);
+    }
+    if (desc->log) {
+        g_c_log      = desc->log;
+        g_c_log_user = desc->log_user;
+        init.log     = cpp_log_thunk;
+    }
     if (desc->default_font_family) init.default_font_family = desc->default_font_family;
     if (desc->default_font_size > 0) init.default_font_size = desc->default_font_size;
 
-    cpp.init(init);  // gpu points at a local; init() consumes it synchronously
+    cpp.init(init);  // gpu/allocator point at locals; init() consumes them synchronously
 }
 
 void affineui_ui_set_html(affineui_ui* ui, const char* html) {
@@ -108,7 +129,26 @@ void affineui_ui_render(affineui_ui* ui, const affineui_frame_target* t) {
     target.wgpu.resolve_view       = t->wgpu_resolve_view;
     target.wgpu.depth_stencil_view = t->wgpu_depth_stencil_view;
     target.gl.framebuffer          = t->gl_framebuffer;
+    target.viewport.x = t->viewport_x;
+    target.viewport.y = t->viewport_y;
+    target.viewport.w = t->viewport_w;
+    target.viewport.h = t->viewport_h;
     reinterpret_cast<affineui::Ui*>(ui)->render(target);
+}
+
+int affineui_ui_needs_update(const affineui_ui* ui) {
+    if (!ui) return 0;
+    return reinterpret_cast<const affineui::Ui*>(ui)->needs_update() ? 1 : 0;
+}
+
+void affineui_ui_mark_dirty(affineui_ui* ui) {
+    if (!ui) return;
+    reinterpret_cast<affineui::Ui*>(ui)->mark_dirty();
+}
+
+void affineui_ui_reset(affineui_ui* ui) {
+    if (!ui) return;
+    reinterpret_cast<affineui::Ui*>(ui)->reset();
 }
 
 int affineui_run_html(const char* html) {

@@ -76,6 +76,7 @@ PUBLIC_HEADERS = [
 # inline into the top of ``affineui.cpp`` so the implementation TUs that
 # follow can see them.
 INTERNAL_HEADERS = [
+    "src/internal/embed_log.h",
     "src/internal/element_id.h",
     "src/internal/animated_style.h",
     "src/internal/computed_style.h",

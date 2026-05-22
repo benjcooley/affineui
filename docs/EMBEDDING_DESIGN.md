@@ -353,7 +353,10 @@ contract, two ways:
 1. **Tell the host when a panel needs repaint.** A cached / worldspace RTT
    panel must not re-render every frame — the host repaints it only when the
    UI changed. Expose:
-   - `bool Ui::is_dirty() const;` — anything changed since the last render.
+   - `bool Ui::needs_update() const;` — true if anything changed since the
+     last render (the host's "should I call render?" check).
+   - `void Ui::mark_dirty();` — force `needs_update()` true, e.g. when host
+     state the UI depends on changed outside AffineUI's knowledge.
    - `Rect Ui::damage() const;` — union of dirty regions (panel-local),
      empty when clean. (List-of-rects is a possible refinement.)
    - optional `Ui::on_damage(cb)` — fired when a *clean* panel goes dirty, so
@@ -368,13 +371,20 @@ Sources of dirt: DOM/content mutation, imm re-eval, style/animation ticks,
 hover/focus changes, an async asset arriving (§3.0), viewport resize.
 
 **Who ticks:** the host either calls `render` every frame, or only when
-`is_dirty()`. An in-flight animation marks the Ui dirty each tick so an
+`needs_update()`. An in-flight animation marks the Ui dirty each tick so an
 "only when dirty" host keeps rendering until it settles, then goes idle.
 
 **Host-driven time.** Animations, transitions, and timers advance off a
 **host-supplied delta/clock** (passed to `render`/`tick`), never the wall
 clock. The engine owns time — so pause, slow-mo, and fixed-timestep
 determinism all work, and a paused game freezes the UI's animations too.
+
+**Cheap no-op frames.** The host may call `render` unconditionally every
+frame; when there's nothing to do — clean state, or (in the future
+compositing-layer mode) nothing to recomposite — we **early-return** without
+touching the GPU. Calling us with no work is free, so the host never has to
+guard the call with its own dirty check (though it can use `needs_update()`
+to skip even that).
 
 Open: damage granularity (single union rect vs list); panel-local px vs points.
 
@@ -496,7 +506,7 @@ deterministic way to wipe a Ui without tearing down the embedding session.
 | Host-driven time/clock | animation/determinism | planned | `dt` to `render`/`tick` |
 | Logging / diagnostics hook | dev / engine logs | easy | host log callback |
 | Color space (sRGB, premultiplied) | compositing | now (sRGB only) | target format contract |
-| Dirty / damage query | S3, S5 | easy (expose) | `Ui::is_dirty()` / `damage()` |
+| Update/dirty query + force | S3, S5 | easy (expose) | `Ui::needs_update()` / `mark_dirty()` / `damage()` |
 | Damage callback (idle hosts) | S3 | easy | `Ui::on_damage(cb)` |
 | Partial / scissored repaint | S3 | planned | `clear=false` + scissor |
 | Asset resolver (`url` → bytes/texture/sprite) | all images | planned (core) | `ImageResolver` |

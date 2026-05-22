@@ -9,6 +9,7 @@
 // See affineui/embed.h for the full semantics (all-or-nothing ownership,
 // the D3D11/GL state-clobber contract, per-backend handle types).
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -48,8 +49,28 @@ typedef struct affineui_gpu_context {
     int sample_count;                  // MSAA sample count (>=1)
 } affineui_gpu_context;
 
+// Host allocator (optional). When set, AffineUI routes allocation through it.
+typedef struct affineui_allocator {
+    void* (*alloc)  (size_t size, size_t align, void* user);
+    void* (*realloc)(void* p, size_t old_sz, size_t new_sz, size_t align, void* user);
+    void  (*free)   (void* p, void* user);
+    void*  user;
+} affineui_allocator;
+
+typedef enum affineui_log_level {
+    AFFINEUI_LOG_DEBUG = 0,
+    AFFINEUI_LOG_INFO  = 1,
+    AFFINEUI_LOG_WARN  = 2,
+    AFFINEUI_LOG_ERROR = 3
+} affineui_log_level;
+
+typedef void (*affineui_log_fn)(affineui_log_level level, const char* msg, void* user);
+
 typedef struct affineui_init_desc {
     const affineui_gpu_context* gpu;   // non-null + complete = embedded mode
+    const affineui_allocator*   allocator;  // optional host allocator
+    affineui_log_fn             log;        // optional log sink
+    void*                       log_user;
     const char* default_font_family;   // may be null
     int         default_font_size;     // 0 = use AffineUI default
 } affineui_init_desc;
@@ -62,6 +83,9 @@ typedef struct affineui_frame_target {
     float dpi_scale;     // pixels per CSS point (1.0, 2.0, ...)
     int   sample_count;  // must match the target (>=1)
     int   clear;         // non-zero = clear to clear color first
+
+    // Optional sub-rect of the target, in pixels (all-zero = whole target).
+    int   viewport_x, viewport_y, viewport_w, viewport_h;
 
     const void* d3d11_render_view;          // ID3D11RenderTargetView*
     const void* d3d11_resolve_view;         // ID3D11RenderTargetView* (optional)
@@ -93,6 +117,11 @@ void affineui_ui_set_clear_color(affineui_ui* ui,
 
 // ── Render (embedded) ────────────────────────────────────────────────
 void affineui_ui_render(affineui_ui* ui, const affineui_frame_target* target);
+
+// ── Update scheduling / lifecycle ────────────────────────────────────
+int  affineui_ui_needs_update(const affineui_ui* ui);  // 1 = repaint needed
+void affineui_ui_mark_dirty(affineui_ui* ui);
+void affineui_ui_reset(affineui_ui* ui);
 
 // ── Misc ─────────────────────────────────────────────────────────────
 const char* affineui_version(void);

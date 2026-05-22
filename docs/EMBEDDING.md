@@ -100,6 +100,35 @@ fully sets up everything it needs each frame.
 
 ---
 
+## On-demand rendering, sub-rect panels, allocator & logging
+
+A few more knobs are wired up (the broader roadmap is in
+[EMBEDDING_DESIGN.md](EMBEDDING_DESIGN.md)):
+
+- **On-demand rendering** — `ui.needs_update()` returns whether anything
+  changed since the last render, so a host can skip `render` when idle;
+  `ui.mark_dirty()` forces a repaint when host-side state the UI depends on
+  changed. *(Animation-driven dirtiness is still a TODO — render every frame
+  if you run CSS animations.)*
+- **Sub-rect panel** — set `FrameTarget::viewport` `{x,y,w,h}` (pixels) to
+  draw the document into a sub-region of the target; the document lays out at
+  `w×h`. A sub-rect draws *over* existing content (the whole-target clear
+  can't apply to a sub-rect), so give the panel a `body { background }`. See
+  `examples/09_embed_d3d11` (centered panel over a host clear).
+- **`ui.reset()`** — drop all content (DOM/CSS/handlers/imm) back to a clean,
+  reusable state, keeping the device + allocator.
+- **Allocator** — `InitDesc::allocator` routes allocation through your pool.
+  Currently wired through sokol_gfx; stb/fontstash/lexbor/nanovg + `std`
+  routing is on the roadmap (DESIGN §6).
+- **Logging** — `InitDesc::log` (+ `log_user`) receives AffineUI's warnings /
+  errors instead of stderr.
+
+All of the above have C ABI mirrors in `c_api.h`
+(`affineui_ui_needs_update` / `_mark_dirty` / `_reset`,
+`affineui_frame_target::viewport_*`, `affineui_init_desc::allocator` / `log`).
+
+---
+
 ## Requirements & gotchas
 
 * **Backend must match the build.** `GpuContext::backend` must equal the

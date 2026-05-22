@@ -40,6 +40,7 @@
 
 #include "affineui/types.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -94,6 +95,23 @@ struct GpuContext {
     int         sample_count = 1;  // MSAA sample count of the targets
 };
 
+/// Host memory allocator. When supplied, AffineUI routes its allocations
+/// through it (see docs/EMBEDDING_DESIGN.md §6). Null = default malloc/new.
+/// `align` is the requested alignment in bytes (power of two).
+struct Allocator {
+    void* (*alloc)  (size_t size, size_t align, void* user)             = nullptr;
+    void* (*realloc)(void* p, size_t old_sz, size_t new_sz, size_t align, void* user) = nullptr;
+    void  (*free)   (void* p, void* user)                               = nullptr;
+    void*  user                                                         = nullptr;
+};
+
+/// Severity for the log hook.
+enum class LogLevel { debug, info, warn, error };
+
+/// Host log sink. AffineUI's warnings/errors + parse diagnostics route here
+/// instead of stderr. Null = default (stderr in debug, silent otherwise).
+using LogFn = void (*)(LogLevel level, const char* msg, void* user);
+
 /// One-time initialization for embedded mode.
 struct InitDesc {
     /// Host graphics objects. Non-null + complete → embedded mode (AffineUI
@@ -102,6 +120,13 @@ struct InitDesc {
 
     /// Optional resource loader for url-referenced assets (CSS, images).
     ResourceLoader resource_loader{};
+
+    /// Optional host allocator (see §6). When set, AffineUI allocates from it.
+    const Allocator* allocator = nullptr;
+
+    /// Optional host log sink + its user pointer.
+    LogFn log      = nullptr;
+    void* log_user = nullptr;
 
     /// Default font + size used when CSS doesn't specify one.
     std::string default_font_family = "sans-serif";
@@ -119,7 +144,14 @@ struct FrameTarget {
 
     /// Clear the target to the Ui's clear color before drawing. Set false
     /// to draw the UI over content the host already rendered into it.
+    /// (A sub-rect viewport forces draw-over: the pass clear is whole-target,
+    /// so sub-rect panels ignore `clear` and rely on the body background.)
     bool  clear = true;
+
+    /// Optional sub-rect of the target to draw into, in pixels. All-zero =
+    /// the whole target. Lets you place a panel at x,y of size w×h (the
+    /// document lays out at w×h). See docs/EMBEDDING_DESIGN.md §2.2.
+    struct { int x = 0, y = 0, w = 0, h = 0; } viewport;
 
     struct {
         const void* render_view        = nullptr;  // ID3D11RenderTargetView*
@@ -142,6 +174,26 @@ struct FrameTarget {
     struct {
         std::uint32_t framebuffer = 0;  // GL framebuffer object (0 = default)
     } gl;
+
+    // TODO(embed): per-frame external (live) engine textures referenced as
+    //   live://name — transient, used this frame only (DESIGN §3.2):
+    //     const ExternalTexture* external; int external_count;
 };
+
+// ── Planned embedding surface (see docs/EMBEDDING_DESIGN.md) ──────────────────
+// Declared here as intent; not yet implemented. Each is a small free function
+// or Ui method with a C ABI mirror when it lands.
+//
+//   Async asset resolver       AssetResolver hook + Ui::asset_bytes/pixels/sprite,
+//                              Ui::invalidate_asset   (DESIGN §3.0)
+//   Atlas (POD, owned)         Ui::register_atlas(pixels, size, fmt, AtlasInfo) /
+//                              unregister_atlas       (DESIGN §3.3)
+//   Hit-test / click-through   Ui::hit_test(point) + panel::hit_test_at/_uv (§4)
+//   Resource accounting        Ui::stats() + on_gpu_resource callback (§6)
+//   Input intents/hooks        text_input_active()+caret_rect(), clipboard_get/set,
+//                              gamepad navigation events (§4)
+//   Host-driven time           dt/clock into render/tick (§5)
+//   on_damage / partial repaint                                         (§5)
+//   NVGcontext escape hatch (opt-in, advanced)                          (§7)
 
 }  // namespace affineui
