@@ -10,6 +10,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmark/main.cpp")
     add_subdirectory(benchmark)
 endif()
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/conformance/main.cpp")
+    add_subdirectory(conformance)
+endif()
+
 # ─── Amalgamation ────────────────────────────────────────────────────────────
 # `tools/amalgamate.py` concatenates the modular sources into a single
 # `affineui.h` + `affineui.cpp` pair under ${CMAKE_BINARY_DIR}/dist/. That

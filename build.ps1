@@ -226,6 +226,21 @@ function Invoke-Test {
     Assert-LastExit 'tests'
 }
 
+function Invoke-Conformance {
+    # Build the headless tool, ensure the browser driver's deps, then run the
+    # A/B harness (all tests). For one test: python conformance/run.py --test X
+    Invoke-Configure
+    cmake --build $Build --target conformance_test
+    Assert-LastExit 'build conformance_test'
+    $browser = Join-Path $Root 'conformance\browser'
+    if (-not (Test-Path (Join-Path $browser 'node_modules'))) {
+        Write-Host 'conformance: installing browser deps (npm install) ...' -ForegroundColor Cyan
+        Push-Location $browser
+        try { npm install --no-audit --no-fund; Assert-LastExit 'npm install' } finally { Pop-Location }
+    }
+    python (Join-Path $Root 'conformance\run.py')
+}
+
 function Invoke-Sync([string]$which) {
     $sh = Get-Command bash -ErrorAction SilentlyContinue
     if (-not $sh) { throw "sync-$which needs bash + rsync (use git-bash or WSL)." }
@@ -243,6 +258,8 @@ AffineUI task runner (Windows / PowerShell). Unix/macOS: use ./build.sh
   .\build.ps1 examples         build every example app (MSVC / D3D11)
   .\build.ps1 run [name]       build + run one example  (default: hello)
   .\build.ps1 test             build + run the unit tests (ctest)
+  .\build.ps1 conformance      A/B render every test in a browser vs AffineUI,
+                               pixel-diff, write conformance/out/report.html
   .\build.ps1 configure        cmake configure into build\ninja
   .\build.ps1 clean            remove build\
   .\build.ps1 sync-nanovg      vendor the affineui_nanovg fork  (needs bash+rsync)
@@ -265,6 +282,7 @@ switch ($Verb) {
     'examples'    { Invoke-Examples }
     'run'         { Invoke-Run $Name }
     'test'        { Invoke-Test }
+    'conformance' { Invoke-Conformance }
     'configure'   { Invoke-Configure }
     'clean'       { if (Test-Path (Join-Path $Root 'build')) { Remove-Item -Recurse -Force (Join-Path $Root 'build') } }
     'sync-nanovg' { Invoke-Sync 'nanovg' }

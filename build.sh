@@ -148,6 +148,7 @@ case "$cmd" in
     examples)    build_examples ;;
     run)         run_example "${1:-}" ;;
     test)        run_tests ;;
+    conformance) echo "conformance harness is Windows/D3D11-only for now — use build.ps1 conformance (see docs/CONFORMANCE.md)" >&2; exit 1 ;;
     configure)   do_configure ;;
     clean)       rm -rf "$BUILD" ;;
     sync-nanovg) bash "$ROOT/scripts/sync_nanovg_from_fork.sh" ;;

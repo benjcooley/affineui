@@ -64,3 +64,7 @@ compile_commands.json
 # Python bytecode (amalgamate.py)
 __pycache__/
 *.pyc
+
+# Conformance harness (generated snapshots + browser deps)
+conformance/out/
+conformance/browser/node_modules/
